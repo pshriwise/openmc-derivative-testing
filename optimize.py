@@ -11,14 +11,22 @@ import openmc.lib
 from scipy.optimize import minimize
 
 import geometry_plots
+from model import main as generate_model
 from config import (
     FLUX_TRIGGER_REL_ERR, TRIGGER_MAX_BATCHES_FACTOR, TRIGGER_BATCH_INTERVAL,
     PARAMETER_CHANGE_TOL_CM, PARAMETER_STABLE_ITERATIONS, SURFACE_PARAMETER_NAME,
 )
 
 
-model = openmc.Model.from_model_xml('model.xml')
-model_surfaces = model.geometry.get_all_surfaces()
+model = None
+model_surfaces = None
+
+
+def initialize_model():
+    """Generate a fresh model before starting an optimization or sweep."""
+    global model, model_surfaces
+    model = generate_model()
+    model_surfaces = model.geometry.get_all_surfaces()
 
 runtime_args = ['-s', '10']
 
@@ -199,6 +207,7 @@ def flux_objective(parameter, samples=None, plot_dir=None, plot_extent=None,
 def optimize_parameter(output_path='optimization_history.npy', plot_dir=None,
                        use_jac=True):
     """Minimize water flux and save every objective evaluation in run order."""
+    initialize_model()
     initial_value = get_parameter()
     print("Initial iron sphere parameter:", initial_value)
     lower_bound, upper_bound = get_constraints()
@@ -228,6 +237,7 @@ def optimize_parameter(output_path='optimization_history.npy', plot_dir=None,
 def collect_parameter_sweep(num_values=100, output_path='parameter_sweep.npy',
                             plot_dir=None):
     """Sample the parameter range; optionally save material slices to plot_dir."""
+    initialize_model()
     initial_parameter = get_parameter()
     lower_bound, upper_bound = get_constraints()
     parameters = np.linspace(lower_bound, upper_bound, num_values, endpoint=True)
