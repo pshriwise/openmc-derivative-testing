@@ -31,7 +31,7 @@ def parameter_plot_extent(model, max_parameter, parameter_name=SURFACE_PARAMETER
 
 
 def plot_current_parameter(model, plot_dir, run_index, plot_extent, source_samples=20,
-                           parameter_name=SURFACE_PARAMETER_NAME):
+                           parameter_name=SURFACE_PARAMETER_NAME, parameter_names=None):
     """Save a material slice with sampled source sites and a run-indexed name."""
     import matplotlib.pyplot as plt
     import openmc
@@ -71,10 +71,13 @@ def plot_current_parameter(model, plot_dir, run_index, plot_extent, source_sampl
             axis.legend(loc='upper left')
         axis.set_xlabel('x [cm]')
         axis.set_ylabel('y [cm]')
-        axis.set_title(f'Run {run_index}: iron sphere {parameter_name} = {parameter:.8g} {SURFACE_PARAMETER_UNITS}')
-        output_path = plot_dir / (
-            f'run_{run_index:04d}_parameter_{parameter:.8g}.png'
-        )
+        names = (parameter_name,) if parameter_names is None else parameter_names
+        coefficients = model.geometry.get_all_surfaces()[1].coefficients
+        label = ', '.join(f'{name} = {coefficients[name]:.8g}' for name in names)
+        axis.set_title(f'Run {run_index}: iron sphere {label} {SURFACE_PARAMETER_UNITS}')
+        saved_parameters = (f'{parameter:.8g}' if parameter_names is None else
+                            '__'.join(f'{name}={coefficients[name]:.8g}' for name in names))
+        output_path = plot_dir / f'run_{run_index:04d}_parameter_{saved_parameters}.png'
         fig.savefig(output_path, dpi=150)
     finally:
         plt.close(fig)

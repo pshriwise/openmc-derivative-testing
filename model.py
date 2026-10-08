@@ -1,8 +1,8 @@
 import openmc
 
-from config import SURFACE_PARAMETER_NAME
+from config import OPTIMIZATION_PARAMETER_NAMES
 
-def build_model():
+def build_model(parameter_names=None):
     """Build a fresh model with stable IDs for simulation workflows."""
     # ---------------------------------------------------------------------------
     # Materials
@@ -23,11 +23,11 @@ def build_model():
     # Geometry
     # ---------------------------------------------------------------------------
     # Iron sphere at the origin
-    iron_sphere = openmc.Sphere(surface_id=1, x0=5, y0=7, z0=0, r=2)
+    iron_sphere = openmc.Sphere(surface_id=1, x0=4, y0=5, z0=0, r=2)
     iron_cell = openmc.Cell(cell_id=1, name='iron_sphere', fill=iron, region=-iron_sphere)
 
     # Water sphere centered at (20, 0, 0)
-    water_sphere = openmc.Sphere(surface_id=2, x0=15, y0=0, z0=0, r=5)
+    water_sphere = openmc.Sphere(surface_id=2, x0=25, y0=0, z0=0, r=5)
     water_cell = openmc.Cell(cell_id=2, name='water_sphere', fill=water, region=-water_sphere)
 
     # Large void sphere enclosing both cells with a vacuum boundary condition
@@ -77,7 +77,9 @@ def build_model():
 
 
     geom_derivative = openmc.GeometricDerivative(flux_tally, iron_sphere, id=1)
-    geom_derivative.surface_parameters = [SURFACE_PARAMETER_NAME]
+    geom_derivative.surface_parameters = list(
+        OPTIMIZATION_PARAMETER_NAMES if parameter_names is None else parameter_names
+    )
 
     # ---------------------------------------------------------------------------
     # Export
@@ -90,9 +92,9 @@ def build_model():
     return model
 
 
-def main(output_path="model.xml"):
+def main(output_path="model.xml", parameter_names=None):
     """Generate and export the model used by optimization and sweeps."""
-    model = build_model()
+    model = build_model(parameter_names)
     model.export_to_model_xml(output_path)
     return model
 
