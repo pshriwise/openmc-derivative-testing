@@ -1,0 +1,36 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editor and operating-system files
+*~
+*.swp
+*.swo
+.DS_Store
+
+# OpenMC exports and transport outputs
+/model.xml
+/materials.xml
+/geometry.xml
+/settings.xml
+/tallies.xml
+/plots.xml
+/statepoint.*.h5
+/summary.h5
+/source*.h5
+/particle*.h5
+/tallies.out
+
+# Experiment data and plotting state
+/*.npy
+/*.npz
+
+# Generated plots and animations
+/*.png
+/*.gif
+/*.mp4
+/*_geom/
+
