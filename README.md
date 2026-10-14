@@ -4,6 +4,26 @@ This repository explores how changing an iron sphere's radius and position affec
 
 The model in `model.py` uses a 14.1 MeV point neutron source at the origin directed uniformly into the positive-x hemisphere. The iron sphere starts at `(4, 5, 0)` cm with radius 2 cm; the water sphere is at `(25, 0, 0)` cm with radius 5 cm. Both sit in a void bounded by a vacuum sphere of radius 1000 cm. Tally 1, `water_flux`, measures collision-estimator flux in the water cell. Geometric derivative 1 differentiates that tally with respect to coefficients of iron surface 1.
 
+## Where to change the experiment
+
+**Edit `config.py` to select the surface parameters used for derivatives.** The scalar sweep and optimization use separate settings:
+
+```python
+# Coefficient swept by python optimize.py --sweep:
+SURFACE_PARAMETER_NAME = 'y0'
+
+# Ordered coefficients differentiated and optimized together:
+OPTIMIZATION_PARAMETER_NAMES = ('r', 'y0', 'x0')
+```
+
+Supported iron-sphere coefficients are `r` (radius) and `x0`, `y0`, `z0` (center coordinates), all in cm. For a radius sweep, set `SURFACE_PARAMETER_NAME = 'r'`. To optimize position only, set `OPTIMIZATION_PARAMETER_NAMES = ('x0', 'y0')`; for radius only, use the one-element tuple `('r',)`. Change bounds in `optimize.py`'s `get_constraints()` function.
+
+`model.py`'s `build_model()` assigns these names to `geom_derivative.surface_parameters`. Standalone `python model.py` uses `OPTIMIZATION_PARAMETER_NAMES`; the sweep driver overrides that list with just `SURFACE_PARAMETER_NAME`. Python callers can also pass `parameter_names` explicitly to `build_model()` or `optimize_parameter()`. The differentiated tally and surface are selected by `openmc.GeometricDerivative(flux_tally, iron_sphere, id=1)` in `model.py`. Changing the target surface or tally also requires updating the drivers, which currently reference surface 1, water surface 2, tally 1, and derivative 1. The collision-count collector removes geometric derivatives and always sweeps radius.
+
+**Edit `model.py`'s `build_model()` to adjust the initial model.** Its labeled sections contain the material compositions and densities, sphere centers and radii, outer boundary, source location/direction/energy, transport batches and particles, and flux tally. In particular, the `iron_sphere = openmc.Sphere(...)` constructor sets the optimizer's initial radius and position; `water_sphere = openmc.Sphere(...)` sets the receiving geometry. Use the constructor values as the source of truth, since some nearby comments describe older positions.
+
+Run `python model.py` after those edits to regenerate `model.xml` for the collision-count workflow. `optimize.py` automatically rebuilds and exports the model at the start of each optimization or scalar sweep, so persistent changes to its initial model belong in `model.py`. Revisit parameter bounds when changing the geometry, and regenerate results and matching geometry images for the revised experiment.
+
 ## Requirements
 
 - Python with NumPy, SciPy, Matplotlib, and Pillow. The basin-hopping implementation requires a SciPy version supporting the `basinhopping(..., rng=...)` argument.
