@@ -8,7 +8,7 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter, writ
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
-from animate_parameter_sweep import padded_limits
+from animate_parameter_sweep import history_images, padded_limits
 from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
 from plot_parameter_sweep import load_sweep
 
@@ -55,32 +55,7 @@ def path_derivatives(parameters, mean, derivatives):
     return finite_difference, projection
 
 
-def optimization_image_paths(plot_dir, parameters, names):
-    """Read named vector image files, with support for older scalar filenames."""
-    paths = []
-    for index, values in enumerate(parameters):
-        matches = list(Path(plot_dir).glob(f'run_{index:04d}_parameter_*.png'))
-        if len(matches) != 1:
-            raise ValueError(f'Expected one geometry image for run {index} in {plot_dir}; found {len(matches)}.')
-        path = matches[0]
-        suffix = path.stem.split('_parameter_', 1)[1]
-        if '=' in suffix:
-            saved = dict(part.split('=', 1) for part in suffix.split('__'))
-            if set(saved) != set(names) or any(
-                not np.isclose(float(saved[name]), value, rtol=1e-7, atol=1e-12)
-                for name, value in zip(names, values)
-            ):
-                raise ValueError(f'{path} does not match the saved optimization parameters.')
-        elif SURFACE_PARAMETER_NAME in names:
-            # Earlier geometry plots encoded only the configured sweep parameter.
-            value = values[names.index(SURFACE_PARAMETER_NAME)]
-            if not np.isclose(float(suffix), value, rtol=1e-7, atol=1e-12):
-                raise ValueError(f'{path} does not match {SURFACE_PARAMETER_NAME}={value}.')
-        paths.append(path)
-    return paths
-
-
-def create_animation(input_path, plot_dir, fps=5):
+def create_animation(input_path, fps=5):
     """Animate all coordinates in evaluation order, including line-search runs."""
     if not np.isfinite(fps) or fps <= 0:
         raise ValueError('fps must be finite and positive.')
@@ -91,14 +66,14 @@ def create_animation(input_path, plot_dir, fps=5):
     mean = results['tally_mean']
     if not all(np.all(np.isfinite(values)) for values in (parameters, mean, derivatives)):
         raise ValueError('Parameters, tally mean, and derivatives must be finite.')
-    image_paths = optimization_image_paths(plot_dir, parameters, names)
+    images = history_images(results)
     finite_difference, projection = path_derivatives(parameters, mean, derivatives)
     runs = np.arange(len(results))
 
     fig = plt.figure(figsize=(14, 12), layout='constrained')
     grid = fig.add_gridspec(4, 2, width_ratios=(1.3, 1))
     geometry_axis = fig.add_subplot(grid[:, 0])
-    image = geometry_axis.imshow(plt.imread(image_paths[0]))
+    image = geometry_axis.imshow(images[0])
     geometry_axis.set_axis_off()
     mean_axis = fig.add_subplot(grid[0, 1])
     derivative_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
@@ -152,7 +127,7 @@ def create_animation(input_path, plot_dir, fps=5):
 
     def update(index):
         count = index + 1
-        image.set_data(plt.imread(image_paths[index]))
+        image.set_data(images[index])
         mean_line.set_data(runs[:count], mean[:count])
         for column, line in enumerate(derivative_lines):
             line.set_data(runs[:count], derivatives[:count, column])
@@ -178,8 +153,6 @@ def create_animation(input_path, plot_dir, fps=5):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('filename', nargs='?', default='optimization_history.npy')
-    parser.add_argument('--plot-dir', default='optimization_geom',
-                        help='Directory of run-indexed geometry PNGs.')
     parser.add_argument('-o', '--output', help='Output animation filename (.gif or .mp4).')
     parser.add_argument('--fps', type=float, default=5, help='Frames per second (default: 5).')
     parser.add_argument('--dpi', type=int, default=100, help='Output resolution (default: 100 dpi).')
@@ -198,7 +171,7 @@ def main():
     else:
         parser.error('Output must have a .gif or .mp4 extension.')
     try:
-        animation = create_animation(Path(args.filename), Path(args.plot_dir), args.fps)
+        animation = create_animation(Path(args.filename), args.fps)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     try:

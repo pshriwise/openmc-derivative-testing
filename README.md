@@ -22,7 +22,7 @@ Supported iron-sphere coefficients are `r` (radius) and `x0`, `y0`, `z0` (center
 
 **Edit `model.py`'s `build_model()` to adjust the initial model.** Its labeled sections contain the material compositions and densities, sphere centers and radii, outer boundary, source location/direction/energy, transport batches and particles, and flux tally. In particular, the `iron_sphere = openmc.Sphere(...)` constructor sets the optimizer's initial radius and position; `water_sphere = openmc.Sphere(...)` sets the receiving geometry. Use the constructor values as the source of truth, since some nearby comments describe older positions.
 
-Run `python model.py` after those edits to regenerate `model.xml` for the collision-count workflow. `optimize.py` automatically rebuilds and exports the model at the start of each optimization or scalar sweep, so persistent changes to its initial model belong in `model.py`. Revisit parameter bounds when changing the geometry, and regenerate results and matching geometry images for the revised experiment.
+Run `python model.py` after those edits to regenerate `model.xml` for the collision-count workflow. `optimize.py` automatically rebuilds and exports the model at the start of each optimization or scalar sweep, so persistent changes to its initial model belong in `model.py`. Revisit parameter bounds when changing the geometry, and regenerate results with embedded geometry images for the revised experiment.
 
 ## Requirements
 
@@ -49,12 +49,11 @@ Run commands from the repository root. For plotting on a machine without a displ
 | `collect_collision_sweep.py` | Loads an existing model XML, removes geometric derivatives, sweeps iron radius, and appends a collision filter to all tallies. Defaults to 100 radius points, collision counts 1–20, score `flux`, seed 10, and `collision_parameter_sweep.npz`. |
 | `plot_parameter_sweep.py` | Plots a scalar sweep's flux with ±3 standard deviations, geometric and finite-difference derivatives, their difference, `dJ` and `datt` components, and a component ratio. `--simple` keeps only the flux and two derivative panels. Defaults to `parameter_sweep.npy` and a PNG with the same stem. |
 | `plot_collision_sweep.py` | Plots per-collision trends with uncertainty bands and their sum. Defaults to the first tally in `collision_parameter_sweep.npz`; select another with `--tally-id` or `--tally-name`. `--sigma` controls the band width (default 3). |
-| `animate_parameter_sweep.py` | Combines saved geometry PNGs with growing scalar sweep plots in evaluation order. Defaults to `parameter_sweep.npy`, `geom_plots/`, and `parameter_sweep_animation.gif`. |
-| `animate_optimization.py` | Animates scalar or vector optimization histories, including line-search evaluations and basin jumps. Shows coordinates, flux, derivatives, and flux secants along the traveled path compared with projected gradients. Defaults to `optimization_history.npy`, `optimization_geom/`, and `optimization_history_animation.gif`. |
-| `geometry_plots.py` | Shared helper module, without a command-line entrypoint. Computes a fixed XY extent and saves material slices with source markers and run-indexed parameter filenames. Used by the simulation drivers. |
+| `animate_parameter_sweep.py` | Combines embedded geometry images with growing scalar sweep plots in evaluation order. Defaults to `parameter_sweep.npy` and `parameter_sweep_animation.gif`. |
+| `animate_optimization.py` | Animates scalar or vector optimization histories, including line-search evaluations and basin jumps. Shows coordinates, flux, derivatives, and flux secants along the traveled path compared with projected gradients. Defaults to `optimization_history.npy` and `optimization_history_animation.gif`. |
+| `geometry_plots.py` | Shared helper module, without a command-line entrypoint. Computes a fixed XY extent and renders RGBA material slices with source markers in memory. Used by the simulation drivers. |
 | `config.py` | Shared settings, without a command-line entrypoint. Selects the swept coefficient, optimized coordinates, units, convergence tolerance, flux uncertainty trigger, and basin-hopping defaults. |
-| `test_optimization.py` | `unittest` checks for coordinate mapping, vector histories, convergence, and bounded basin hopping. Uses mocked transport and synthetic objectives. |
-| `test_optimization_animation.py` | `unittest` checks for path secants, matching geometry filenames, and rendering scalar/vector GIFs using synthetic data. |
+| `test_history_images.py` | `unittest` checks for embedded image capture, scalar/vector history round trips, collision archives, and GIF rendering without external PNGs. Uses mocked transport and synthetic data. |
 
 Each command-line analysis or simulation driver accepts `--help` for its complete options. `model.py` has no argument parser.
 
@@ -63,10 +62,10 @@ Each command-line analysis or simulation driver accepts `--help` for its complet
 ### Sweep and compare derivatives
 
 ```sh
-python optimize.py --sweep -n 100 -o parameter_sweep.npy --plot-dir geom_plots
+python optimize.py --sweep -n 100 -o parameter_sweep.npy
 python plot_parameter_sweep.py parameter_sweep.npy
 python plot_parameter_sweep.py parameter_sweep.npy --simple -o parameter_sweep_simple.png
-python animate_parameter_sweep.py parameter_sweep.npy --plot-dir geom_plots
+python animate_parameter_sweep.py parameter_sweep.npy
 ```
 
 The sweep varies `SURFACE_PARAMETER_NAME` from `config.py` (currently `y0`) over the bounds returned by `get_constraints()` (currently −10 to 10 cm for `y0`). It restores the initial coefficient afterward. Derivatives are estimated from the sampled means with `numpy.gradient` for comparison with the transport derivative. Use at least two points for these plots, and use scalar sweep data with unique parameter values.
@@ -74,14 +73,14 @@ The sweep varies `SURFACE_PARAMETER_NAME` from `config.py` (currently `y0`) over
 ### Minimize water flux
 
 ```sh
-python optimize.py --plot-dir optimization_geom
-python animate_optimization.py optimization_history.npy --plot-dir optimization_geom
+python optimize.py
+python animate_optimization.py optimization_history.npy
 ```
 
 The default optimizes `(r, y0, x0)` together with basin hopping around bounded L-BFGS-B local minimizations. Current bounds are 0.01–20 cm for radius and −10–10 cm for `x0` and `y0`. Change `OPTIMIZATION_PARAMETER_NAMES` in `config.py` to select coordinates; the Python function also accepts `parameter_names=('y0', 'x0')`, for example.
 
 ```sh
-python optimize.py --method local -o local_history.npy --plot-dir local_geom
+python optimize.py --method local -o local_history.npy
 python optimize.py --no-jac --hops 5 -o numerical_history.npy
 python optimize.py --hops 20 --hop-step-fraction 0.5 --hop-temperature 0.01 --hop-seed 10
 ```
@@ -94,7 +93,7 @@ Both optimization and scalar sweeps enable a 1% relative-error trigger on the fl
 
 ```sh
 python model.py
-python collect_collision_sweep.py model.xml -n 100 --min-collision 1 --max-collision 20 --plot-dir collision_geom
+python collect_collision_sweep.py model.xml -n 100 --min-collision 1 --max-collision 20
 python plot_collision_sweep.py collision_parameter_sweep.npz --tally-id 1
 ```
 
@@ -105,22 +104,41 @@ This workflow always sweeps radius, independently of `SURFACE_PARAMETER_NAME`. I
 Both animation scripts accept `--fps` (default 5), `--dpi` (default 100), and `-o` with a `.gif` or `.mp4` extension:
 
 ```sh
-python animate_parameter_sweep.py parameter_sweep.npy --plot-dir geom_plots -o parameter_sweep_animation.mp4 --fps 10
-MPLBACKEND=Agg python -m unittest test_optimization test_optimization_animation
+python animate_parameter_sweep.py parameter_sweep.npy -o parameter_sweep_animation.mp4 --fps 10
+MPLBACKEND=Agg python -m unittest test_history_images
 ```
 
-Animations require one matching geometry image for every history row. Use a fresh plot directory for each run: old images with the same run index can cause ambiguous matches. The tests do not run neutron transport, but the optimization tests still import the compatible OpenMC API and shared library.
+Animations use the embedded image for each history row and need only the NumPy file. Older histories without an `image` field must be regenerated before animation. The tests do not run neutron transport, but still import the OpenMC API and shared library.
 
 ## Saved data and existing outputs
 
 Current scalar sweep files contain `parameter`, `tally_mean`, `tally_std_dev`, `geometry_derivative`, `dJ`, and `datt`. Optimization histories add `parameter_names`; for multiple coordinates, the parameter and derivative fields are vectors in that saved name order. Load these with `numpy.load(path)`.
 
-Collision `.npz` files contain `radii`, `actual_radii`, `collision_bins`, `tally_ids`, `tally_names`, `mean`, `std_dev`, `collision_sum`, `score_name`, and `model_xml`. The mean and uncertainty arrays have shape `(tallies, radius points, collision bins)`; the sum has shape `(tallies, radius points)`. The existing collision archive has shape `(1, 100, 20)` for its mean array.
+Both workflows always render geometry directly into an `image` field, including
+its axes, title, legend, and source markers. No separate PNGs are written. The field
+is a `uint8` array with shape `(evaluations, height, width, 4)` (RGBA), and does
+not require pickle to load. For example:
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+history = np.load('optimization_history.npy')
+plt.imshow(history['image'][0])
+plt.axis('off')
+plt.show()
+```
+
+Embedded pixels in `.npy` histories are uncompressed and use about 4.9 MB per
+1350 × 900 image. Both animation scripts read these pixels directly from the
+history file.
+
+Collision `.npz` files contain `radii`, `actual_radii`, `collision_bins`, `tally_ids`, `tally_names`, `mean`, `std_dev`, `collision_sum`, `score_name`, `model_xml`, and `image`. The image array contains one RGBA frame per radius. The mean and uncertainty arrays have shape `(tallies, radius points, collision bins)`; the sum has shape `(tallies, radius points)`. The existing collision archive has shape `(1, 100, 20)` for its mean array.
 
 The working directory also contains outputs from earlier experiments:
 
 - `parameter_sweep.npy` contains 100 scalar points spanning −7 to 7 cm, unlike the current −10 to 10 cm bounds. Its PNG shows a flux minimum near the central position and broadly similar tallied and finite-difference derivatives. Saved results describe that run, not necessarily the current configuration.
-- `optimization_history.npy` and `hops.npy` contain two-coordinate histories; `xy.npy` and `xy_latest.npy` contain three-coordinate histories. Their saved `parameter_names` identify the coordinates. Geometry directories such as `opt_geom/`, `hops_geom/`, and `xy_geom/` and the GIFs preserve earlier visualization runs; verify that a history and image directory match before reusing them.
+- `optimization_history.npy` and `hops.npy` contain two-coordinate histories; `xy.npy` and `xy_latest.npy` contain three-coordinate histories. Their saved `parameter_names` identify the coordinates. Geometry directories such as `opt_geom/`, `hops_geom/`, and `xy_geom/` and the GIFs preserve earlier visualization runs; these old histories need regeneration with embedded images to use the current animation scripts.
 - `parameter_sweep_old.npy`, `parameter_sweep_gold.npy`, and `optimization_history_deriv.npy` use the older `radius` field instead of `parameter`. Some also lack `dJ` and `datt`. Current plot/animation loaders reject these schemas; regenerate data or explicitly convert it before plotting.
 - **`parameter_sweep_n2.py`, `parameter_sweep_n3.py`, and `parameter_sweep_n4.py` are binary NumPy arrays, not Python scripts.** Each holds 100 rows with `radius`, `tally_mean`, `tally_std_dev`, and `geometry_derivative`. Read them with `numpy.load`; their names alone do not establish the experimental settings.
 - `model.xml`, split material/geometry/settings/tally XML files, `statepoint.*.h5`, `summary.h5`, and `tallies.out` are OpenMC input exports and simulation outputs. `out.txt` and `out_report.txt` preserve run logs. PNGs, GIFs, MP4s, and geometry image directories are generated visualizations.

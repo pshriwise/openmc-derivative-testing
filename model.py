@@ -23,7 +23,7 @@ def build_model(parameter_names=None):
     # Geometry
     # ---------------------------------------------------------------------------
     # Iron sphere at the origin
-    iron_sphere = openmc.Sphere(surface_id=1, x0=4, y0=5, z0=0, r=2)
+    iron_sphere = openmc.Sphere(surface_id=1, x0=0, y0=0, z0=0, r=2)
     iron_cell = openmc.Cell(cell_id=1, name='iron_sphere', fill=iron, region=-iron_sphere)
 
     # Water sphere centered at (20, 0, 0)
@@ -70,7 +70,7 @@ def build_model(parameter_names=None):
     water_filter = openmc.CellFilter([water_cell], filter_id=1)
     flux_tally = openmc.Tally(tally_id=1, name='water_flux')
     flux_tally.filters = [water_filter]
-    flux_tally.scores = ['flux']
+    flux_tally.scores = ['absorption']
     flux_tally.estimator = 'collision'
 
     tallies = openmc.Tallies([flux_tally])

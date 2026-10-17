@@ -1,8 +1,8 @@
 """Shared settings for surface-parameter simulations and visualizations."""
 
-SURFACE_PARAMETER_NAME = 'y0'
+SURFACE_PARAMETER_NAME = 'r'
 # Ordered coordinates optimized together, e.g. ('x0', 'y0').
-OPTIMIZATION_PARAMETER_NAMES = ('r', 'y0', 'x0')
+OPTIMIZATION_PARAMETER_NAMES = ['r']
 SURFACE_PARAMETER_UNITS = 'cm'
 
 PARAMETER_CHANGE_TOL_CM = 1e-4

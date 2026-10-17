@@ -5,7 +5,7 @@ import numpy as np
 import openmc
 import openmc.lib
 
-from geometry_plots import parameter_plot_extent, plot_current_parameter
+from geometry_plots import parameter_plot_extent, render_current_parameter
 
 DEFAULT_OUTPUT = 'collision_parameter_sweep.npz'
 DEFAULT_NUM_VALUES = 100
@@ -113,7 +113,7 @@ def collapse_to_collision_bins(tally, collision_bins, score_name):
 
 
 def run_collision_filtered_model(model, collision_bins, score_name, runtime_args,
-                                 plot_dir=None, run_index=0, plot_extent=None):
+                                 run_index=0, plot_extent=None):
     """Run one prepared model in a temporary OpenMC session."""
     tally_ids = np.array([tally.id for tally in model.tallies], dtype=int)
     tally_names = np.array([tally.name or f'tally {tally.id}' for tally in model.tallies])
@@ -121,10 +121,15 @@ def run_collision_filtered_model(model, collision_bins, score_name, runtime_args
     mean = np.empty((len(tally_ids), len(collision_bins)))
     std_dev = np.empty_like(mean)
 
+    if plot_extent is None:
+        lower_bound, upper_bound = get_constraints(model)
+        plot_extent = parameter_plot_extent(
+            model, upper_bound, parameter_name='r', min_parameter=lower_bound,
+        )
     with openmc.lib.TemporarySession(model, args=runtime_args, output=False):
-        if plot_dir is not None:
-            plot_path = plot_current_parameter(model, plot_dir, run_index, plot_extent, parameter_name='r')
-            print('Saved geometry plot to:', plot_path.resolve())
+        image = render_current_parameter(
+            model, run_index, plot_extent, parameter_name='r',
+        )
         openmc.lib.run(output=False)
         for index, tally_id in enumerate(tally_ids):
             tally = openmc.lib.tallies[int(tally_id)]
@@ -134,7 +139,7 @@ def run_collision_filtered_model(model, collision_bins, score_name, runtime_args
                 score_name,
             )
 
-    return tally_ids, tally_names, mean, std_dev
+    return tally_ids, tally_names, mean, std_dev, image
 
 
 def collect_collision_parameter_sweep(
@@ -145,7 +150,6 @@ def collect_collision_parameter_sweep(
     score_name=DEFAULT_SCORE,
     seed=DEFAULT_SEED,
     disable_triggers=False,
-    plot_dir=None,
 ):
     """Run a collision-filtered parameter sweep and save named arrays."""
     model_xml = Path(model_xml)
@@ -156,7 +160,8 @@ def collect_collision_parameter_sweep(
     base_model = openmc.Model.from_model_xml(model_xml)
     lower_bound, upper_bound = get_constraints(base_model)
     radii = np.linspace(lower_bound, upper_bound, num_values, endpoint=True)
-    plot_extent = parameter_plot_extent(base_model, upper_bound, parameter_name='r') if plot_dir is not None else None
+    plot_extent = parameter_plot_extent(base_model, upper_bound, parameter_name='r',
+                                       min_parameter=lower_bound)
     runtime_args = ['-s', str(seed)]
 
     tally_ids = None
@@ -164,6 +169,7 @@ def collect_collision_parameter_sweep(
     means = []
     std_devs = []
     actual_radii = []
+    images = []
 
     for index, radius in enumerate(radii, start=1):
         model = prepare_model(model_xml, float(radius), collision_bins, disable_triggers)
@@ -173,12 +179,11 @@ def collect_collision_parameter_sweep(
             f'Running radius {index}/{len(radii)}: '
             f'requested={radius}, actual={actual_radius}'
         )
-        run_tally_ids, run_tally_names, mean, std_dev = run_collision_filtered_model(
+        run_tally_ids, run_tally_names, mean, std_dev, image = run_collision_filtered_model(
             model,
             collision_bins,
             score_name,
             runtime_args,
-            plot_dir=plot_dir,
             run_index=index - 1,
             plot_extent=plot_extent,
         )
@@ -189,6 +194,7 @@ def collect_collision_parameter_sweep(
         elif not np.array_equal(tally_ids, run_tally_ids):
             raise RuntimeError('Tally IDs changed during the sweep.')
 
+        images.append(image)
         means.append(mean)
         std_devs.append(std_dev)
 
@@ -196,9 +202,11 @@ def collect_collision_parameter_sweep(
     std_dev = np.stack(std_devs, axis=1)
     collision_sum = np.nansum(mean, axis=2)
     actual_radii = np.asarray(actual_radii)
+    images = np.stack(images)
 
     np.savez_compressed(
         output_path,
+        image=images,
         radii=radii,
         actual_radii=actual_radii,
         collision_bins=collision_bins,
@@ -213,6 +221,7 @@ def collect_collision_parameter_sweep(
     print(f'Saved collision sweep results to: {output_path}')
 
     return {
+        'image': images,
         'radii': radii,
         'actual_radii': actual_radii,
         'collision_bins': collision_bins,
@@ -271,10 +280,6 @@ def parse_args():
         help='OpenMC random-number seed passed with -s.',
     )
     parser.add_argument(
-        '--plot-dir',
-        help='Save a geometry plot for each sweep run in this directory.',
-    )
-    parser.add_argument(
         '--disable-triggers',
         action='store_true',
         help='Disable tally triggers after loading the source model.',
@@ -296,7 +301,6 @@ def main():
         score_name=args.score,
         seed=args.seed,
         disable_triggers=args.disable_triggers,
-        plot_dir=args.plot_dir,
     )
 
 

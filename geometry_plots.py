@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 
 from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
@@ -30,16 +28,14 @@ def parameter_plot_extent(model, max_parameter, parameter_name=SURFACE_PARAMETER
     return origin, width
 
 
-def plot_current_parameter(model, plot_dir, run_index, plot_extent, source_samples=20,
-                           parameter_name=SURFACE_PARAMETER_NAME, parameter_names=None):
-    """Save a material slice with sampled source sites and a run-indexed name."""
+def render_current_parameter(model, run_index, plot_extent, source_samples=20,
+                             parameter_name=SURFACE_PARAMETER_NAME, parameter_names=None):
+    """Return a uint8 RGBA material slice with source sites and a run title."""
     import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
     import openmc
 
-    plot_dir = Path(plot_dir)
-    plot_dir.mkdir(parents=True, exist_ok=True)
     origin, width = plot_extent
-    parameter = model.geometry.get_all_surfaces()[1].coefficients[parameter_name]
     sources = model.settings.source
     point_sources = all(isinstance(source, openmc.IndependentSource)
                         and isinstance(source.space, openmc.stats.Point)
@@ -48,7 +44,7 @@ def plot_current_parameter(model, plot_dir, run_index, plot_extent, source_sampl
                     'linewidths': 1.5, 'zorder': 3, 'label': 'Source'}
     colors = {material: ('gray' if material.name == 'iron' else 'blue')
               for material in model.geometry.get_all_materials().values()}
-    fig, axis = plt.subplots(figsize=(9, 6), constrained_layout=True)
+    fig, axis = plt.subplots(figsize=(9, 6), dpi=150, constrained_layout=True)
     try:
         model.plot(origin=origin, width=width, pixels=(1200, 800),
                    basis='xy', color_by='material', colors=colors,
@@ -75,10 +71,8 @@ def plot_current_parameter(model, plot_dir, run_index, plot_extent, source_sampl
         coefficients = model.geometry.get_all_surfaces()[1].coefficients
         label = ', '.join(f'{name} = {coefficients[name]:.8g}' for name in names)
         axis.set_title(f'Run {run_index}: iron sphere {label} {SURFACE_PARAMETER_UNITS}')
-        saved_parameters = (f'{parameter:.8g}' if parameter_names is None else
-                            '__'.join(f'{name}={coefficients[name]:.8g}' for name in names))
-        output_path = plot_dir / f'run_{run_index:04d}_parameter_{saved_parameters}.png'
-        fig.savefig(output_path, dpi=150)
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        return np.asarray(canvas.buffer_rgba()).copy()
     finally:
         plt.close(fig)
-    return output_path

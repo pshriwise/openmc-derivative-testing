@@ -11,25 +11,15 @@ from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
 from plot_parameter_sweep import load_sweep, finite_difference_derivative
 
 
-def geometry_image_paths(plot_dir, parameter):
-    """Match geometry files by run index and verify their saved parameter values."""
-    paths = []
-    for index, value in enumerate(parameter):
-        matches = list(Path(plot_dir).glob(f'run_{index:04d}_parameter_*.png'))
-        if len(matches) != 1:
-            raise ValueError(
-                f'Expected one geometry image for run {index} in {plot_dir}; '
-                f'found {len(matches)}.'
-            )
-        path = matches[0]
-        saved_parameter = float(path.stem.split('_parameter_', 1)[1])
-        if not np.isclose(saved_parameter, value, rtol=1e-7, atol=1e-12):
-            raise ValueError(
-                f'{path} has parameter {saved_parameter}, but sweep run {index} '
-                f'has parameter {value}.'
-            )
-        paths.append(path)
-    return paths
+def history_images(results):
+    """Read embedded RGBA frames in evaluation order."""
+    if 'image' not in results.dtype.names:
+        raise ValueError('History has no embedded images; regenerate it with optimize.py.')
+    images = results['image']
+    if (images.dtype != np.uint8 or images.ndim != 4
+            or images.shape[-1] != 4 or min(images.shape[1:3]) == 0):
+        raise ValueError('History images must be uint8 RGBA arrays with nonempty dimensions.')
+    return images
 
 
 def padded_limits(values):
@@ -38,7 +28,7 @@ def padded_limits(values):
     return lower - padding, upper + padding
 
 
-def create_animation(input_path, plot_dir, fps=5):
+def create_animation(input_path, fps=5):
     """Build frames in saved run order, using only observed points in each frame."""
     if fps <= 0:
         raise ValueError('fps must be positive.')
@@ -52,7 +42,7 @@ def create_animation(input_path, plot_dir, fps=5):
         raise ValueError('Sweep parameter, tally mean, and derivative must be finite.')
     if len(np.unique(parameter)) != len(parameter):
         raise ValueError('Sweep parameter values must be unique.')
-    image_paths = geometry_image_paths(plot_dir, parameter)
+    images = history_images(results)
 
     # Each prefix is differentiated independently: later runs cannot affect
     # the finite-difference values displayed in an earlier frame.
@@ -63,7 +53,7 @@ def create_animation(input_path, plot_dir, fps=5):
     fig = plt.figure(figsize=(12, 7), layout='constrained')
     grid = fig.add_gridspec(3, 2, width_ratios=(1.4, 1))
     geometry_axis = fig.add_subplot(grid[:, 0])
-    image = geometry_axis.imshow(plt.imread(image_paths[0]))
+    image = geometry_axis.imshow(images[0])
     geometry_axis.set_axis_off()
     mean_axis = fig.add_subplot(grid[0, 1])
     estimate_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
@@ -99,7 +89,7 @@ def create_animation(input_path, plot_dir, fps=5):
 
     def update(index):
         count = index + 1
-        image.set_data(plt.imread(image_paths[index]))
+        image.set_data(images[index])
         mean_line.set_data(parameter[:count], mean[:count])
         estimate_line.set_data(parameter[:count], estimate[:count])
         difference_line.set_data(parameter[:count] if count >= 2 else [], differences[index])
@@ -119,7 +109,6 @@ def create_animation(input_path, plot_dir, fps=5):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('filename', nargs='?', default='parameter_sweep.npy')
-    parser.add_argument('--plot-dir', default='geom_plots', help='Directory of run-indexed geometry PNGs.')
     parser.add_argument('-o', '--output', help='Output animation filename (.gif or .mp4).')
     parser.add_argument('--fps', type=float, default=5, help='Frames per second (default: 5).')
     parser.add_argument('--dpi', type=int, default=100, help='Output resolution (default: 100 dpi).')
@@ -138,7 +127,7 @@ def main():
     else:
         parser.error('Output must have a .gif or .mp4 extension.')
     try:
-        animation = create_animation(Path(args.filename), Path(args.plot_dir), fps=args.fps)
+        animation = create_animation(Path(args.filename), fps=args.fps)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     try:

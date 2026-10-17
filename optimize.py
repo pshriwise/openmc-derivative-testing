@@ -35,7 +35,8 @@ runtime_args = ['-s', '10']
 
 SimulationSample = namedtuple(
     'SimulationSample',
-    ['parameter', 'tally_mean', 'tally_std_dev', 'geometry_derivative', 'dJ', 'datt'],
+    ['parameter', 'tally_mean', 'tally_std_dev', 'geometry_derivative', 'dJ', 'datt', 'image'],
+    defaults=[None],
 )
 
 SIMULATION_SAMPLE_DTYPE = np.dtype([
@@ -47,12 +48,10 @@ SIMULATION_SAMPLE_DTYPE = np.dtype([
     ('datt', 'f8'),
 ])
 
-def save_history(samples, output_path, parameter_names=None):
-    """Replace the NumPy history atomically so completed evaluations survive."""
-    output_path = Path(output_path)
-    if output_path.suffix != '.npy':
-        output_path = Path(str(output_path) + '.npy')
+def samples_to_array(samples, parameter_names=None):
+    """Build a structured history with optional uint8 RGBA image arrays."""
     dtype = SIMULATION_SAMPLE_DTYPE
+    rows = [tuple(sample[:len(SIMULATION_SAMPLE_DTYPE.names)]) for sample in samples]
     if parameter_names is not None:
         count = len(parameter_names)
         dtype = np.dtype([
@@ -61,18 +60,38 @@ def save_history(samples, output_path, parameter_names=None):
         ])
         # Store coordinate names alongside the vectors in the .npy file.
         dtype = np.dtype(dtype.descr + [('parameter_names', 'U16', (count,))])
-        samples = [
+        rows = [
             tuple(float(np.asarray(value).reshape(-1)[0])
                   if count == 1 and name in ('parameter', 'geometry_derivative', 'dJ', 'datt')
                   else value for name, value in zip(SIMULATION_SAMPLE_DTYPE.names, sample))
-            + (tuple(parameter_names),) for sample in samples
+            + (tuple(parameter_names),) for sample in rows
         ]
+    images = [sample.image for sample in samples]
+    if any(image is not None for image in images):
+        if any(image is None for image in images):
+            raise ValueError('Every history sample must have an image when saving images.')
+        shape = images[0].shape
+        if len(shape) != 3 or shape[-1] != 4:
+            raise ValueError('History images must be RGBA arrays.')
+        if any(image.shape != shape or image.dtype != np.uint8 for image in images):
+            raise ValueError('History images must have matching shapes and uint8 pixels.')
+        dtype = np.dtype(dtype.descr + [('image', 'u1', shape)])
+        rows = [row + (image,) for row, image in zip(rows, images)]
+    return np.array(rows, dtype=dtype)
+
+
+def save_history(samples, output_path, parameter_names=None):
+    """Replace the NumPy history atomically so completed evaluations survive."""
+    output_path = Path(output_path)
+    if output_path.suffix != '.npy':
+        output_path = Path(str(output_path) + '.npy')
+    results = samples_to_array(samples, parameter_names)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(dir=output_path.parent, suffix='.npy',
                                          delete=False) as stream:
             temporary_path = Path(stream.name)
-            np.save(stream, np.array(samples, dtype=dtype))
+            np.save(stream, results)
         os.replace(temporary_path, output_path)
     finally:
         if temporary_path is not None:
@@ -104,7 +123,7 @@ def configure_tally_trigger():
     """Apply a relative-error trigger to the flux tally."""
     flux_tally = next(tally for tally in model.tallies if tally.id == 1)
     trigger = openmc.Trigger('rel_err', FLUX_TRIGGER_REL_ERR)
-    trigger.scores = ['flux']
+    trigger.scores = flux_tally.scores
     flux_tally.triggers = [trigger]
 
     model.settings.trigger_active = True
@@ -139,25 +158,19 @@ def optimization_plot_extent(parameter_names, bounds):
     return tuple((lower + upper) / 2), tuple(1.1 * (upper - lower)[:2])
 
 
-def plot_current_parameter(plot_dir, run_index, plot_extent):
-    return geometry_plots.plot_current_parameter(model, plot_dir, run_index, plot_extent)
-
-
-def evaluate_current_parameter(plot_dir=None, run_index=0, plot_extent=None,
+def evaluate_current_parameter(run_index=0, plot_extent=None,
                                parameter_names=None):
     """Return named results for the current geometry parameter value."""
     names = (SURFACE_PARAMETER_NAME,) if parameter_names is None else parameter_names
     parameter_value = get_parameters(names)
-    if plot_dir is not None and plot_extent is None:
+    if plot_extent is None:
         plot_extent = (parameter_plot_extent(get_constraints()[1]) if parameter_names is None
                        else optimization_plot_extent(names, [get_constraints(name) for name in names]))
     with openmc.lib.run_in_memory(args=runtime_args, output=False):
-        if plot_dir is not None:
-            plot_path = geometry_plots.plot_current_parameter(
-                model, plot_dir, run_index, plot_extent,
-                parameter_names=names if parameter_names is not None else None,
-            )
-            print('Saved geometry plot to:', plot_path.resolve())
+        image = geometry_plots.render_current_parameter(
+            model, run_index, plot_extent,
+            parameter_names=names if parameter_names is not None else None,
+        )
         openmc.lib.simulation_init()
         tally = openmc.lib.tallies[1]
         geom_derivative = openmc.lib.geometry_derivatives[1]
@@ -180,6 +193,7 @@ def evaluate_current_parameter(plot_dir=None, run_index=0, plot_extent=None,
                 geometry_derivative=components(geom_derivative.mean),
                 dJ=components(geom_derivative.dJ / normalization),
                 datt=components(geom_derivative.datt / normalization),
+                image=image,
             )
             if sample.tally_mean == 0.0:
                 flux_rel_err = np.inf
@@ -255,13 +269,12 @@ def update_parameter(new_parameter):
     configure_tally_trigger()
     model.export_to_model_xml()
 
-def flux_objective(parameter, samples=None, plot_dir=None, plot_extent=None,
+def flux_objective(parameter, samples=None, plot_extent=None,
                    output_path=None, use_jac=True, parameter_names=None):
     """Return the flux mean, optionally with its computed gradient."""
     names = validate_parameter_names(OPTIMIZATION_PARAMETER_NAMES if parameter_names is None else parameter_names)
     update_parameters(parameter, names)
     sample = evaluate_current_parameter(
-        plot_dir=plot_dir,
         run_index=len(samples) if samples is not None else 0,
         plot_extent=plot_extent, parameter_names=names,
     )
@@ -296,7 +309,7 @@ class BoundedBasinStep:
         return values
 
 
-def optimize_parameter(output_path='optimization_history.npy', plot_dir=None,
+def optimize_parameter(output_path='optimization_history.npy',
                        use_jac=True, parameter_names=None, method=OPTIMIZATION_METHOD,
                        hop_iterations=BASIN_HOP_ITERATIONS,
                        hop_step_fraction=BASIN_HOP_STEP_FRACTION,
@@ -316,9 +329,9 @@ def optimize_parameter(output_path='optimization_history.npy', plot_dir=None,
     print("Optimization bounds:", bounds)
     samples = []
     convergence = ParameterConvergence(initial_value)
-    plot_extent = optimization_plot_extent(names, bounds) if plot_dir is not None else None
+    plot_extent = optimization_plot_extent(names, bounds)
     objective = partial(
-        flux_objective, samples=samples, plot_dir=plot_dir, plot_extent=plot_extent,
+        flux_objective, samples=samples, plot_extent=plot_extent,
         output_path=output_path, use_jac=use_jac, parameter_names=names,
     )
     local_options = dict(method='L-BFGS-B', jac=True if use_jac else None, bounds=bounds)
@@ -355,27 +368,26 @@ def optimize_parameter(output_path='optimization_history.npy', plot_dir=None,
     update_parameters(result.x, names)
     return result
 
-def collect_parameter_sweep(num_values=100, output_path='parameter_sweep.npy',
-                            plot_dir=None):
-    """Sample the parameter range; optionally save material slices to plot_dir."""
+def collect_parameter_sweep(num_values=100, output_path='parameter_sweep.npy'):
+    """Save scalar sweep results and geometry images in a single NumPy file."""
     initialize_model((SURFACE_PARAMETER_NAME,))
     initial_parameter = get_parameter()
     lower_bound, upper_bound = get_constraints()
     parameters = np.linspace(lower_bound, upper_bound, num_values, endpoint=True)
-    plot_extent = parameter_plot_extent(upper_bound) if plot_dir is not None else None
+    plot_extent = parameter_plot_extent(upper_bound)
     samples = []
 
     try:
         for run_index, parameter in enumerate(parameters):
             update_parameter(float(parameter))
             samples.append(evaluate_current_parameter(
-                plot_dir=plot_dir, run_index=run_index, plot_extent=plot_extent,
+                run_index=run_index, plot_extent=plot_extent,
             ))
             save_history(samples, output_path)
     finally:
         update_parameter(initial_parameter)
 
-    results = np.array(samples, dtype=SIMULATION_SAMPLE_DTYPE)
+    results = samples_to_array(samples)
     print("Saved parameter sweep results to:", output_path)
     return results
 
@@ -384,7 +396,6 @@ def main():
     parser.add_argument('--sweep', action='store_true', help='Evaluate a parameter sweep.')
     parser.add_argument('-n', '--num-values', type=int, default=100)
     parser.add_argument('-o', '--output', help='NumPy output file (default: optimization_history.npy, or parameter_sweep.npy with --sweep).')
-    parser.add_argument('--plot-dir', help='Save a geometry plot for each evaluation here.')
     parser.add_argument('--no-jac', action='store_true',
                         help='Let L-BFGS-B estimate gradients numerically (jac=None).')
     parser.add_argument('--method', choices=('basinhopping', 'local'), default=OPTIMIZATION_METHOD,
@@ -399,11 +410,10 @@ def main():
                         help='Random seed for reproducible basin jumps.')
     args = parser.parse_args()
     if args.sweep:
-        collect_parameter_sweep(args.num_values, args.output or 'parameter_sweep.npy',
-                                plot_dir=args.plot_dir)
+        collect_parameter_sweep(args.num_values, args.output or 'parameter_sweep.npy')
         return
     result = optimize_parameter(args.output or 'optimization_history.npy',
-                                plot_dir=args.plot_dir, use_jac=not args.no_jac,
+                                use_jac=not args.no_jac,
                                 method=args.method, hop_iterations=args.hops,
                                 hop_step_fraction=args.hop_step_fraction,
                                 hop_temperature=args.hop_temperature, hop_seed=args.hop_seed)
