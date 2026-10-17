@@ -9,8 +9,7 @@ from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 from animate_parameter_sweep import history_images, padded_limits
-from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
-from plot_parameter_sweep import load_sweep
+from plot_parameter_sweep import load_sweep, history_metadata
 
 
 def history_coordinates(results):
@@ -23,14 +22,9 @@ def history_coordinates(results):
         derivatives = derivatives[:, None]
     if parameters.ndim != 2 or derivatives.shape != parameters.shape:
         raise ValueError('Parameter and derivative histories must have matching coordinate shapes.')
-    if 'parameter_names' in results.dtype.names:
-        names = tuple(np.atleast_1d(results['parameter_names'][0]))
-        if not np.all(results['parameter_names'] == results['parameter_names'][0]):
-            raise ValueError('Parameter names must remain consistent across evaluations.')
-    elif parameters.shape[1] == 1:
-        names = (SURFACE_PARAMETER_NAME,)
-    else:
-        raise ValueError('Vector histories must include saved parameter_names.')
+    names = tuple(np.atleast_1d(results['parameter_names'][0]))
+    if not np.all(results['parameter_names'] == results['parameter_names'][0]):
+        raise ValueError('Parameter names must remain consistent across evaluations.')
     if len(names) != parameters.shape[1] or len(set(names)) != len(names) or not all(names):
         raise ValueError('Expected one unique name per optimization coordinate.')
     return parameters, derivatives, names
@@ -62,6 +56,10 @@ def create_animation(input_path, fps=5):
     results = load_sweep(input_path)
     if results.ndim != 1 or len(results) == 0:
         raise ValueError('Optimization history must be a nonempty one-dimensional array.')
+    metadata = history_metadata(results)
+    units = metadata['units']
+    score = metadata['tally']['score']
+    tally_label = f'{score} tally mean'
     parameters, derivatives, names = history_coordinates(results)
     mean = results['tally_mean']
     if not all(np.all(np.isfinite(values)) for values in (parameters, mean, derivatives)):
@@ -86,14 +84,14 @@ def create_animation(input_path, fps=5):
                                              label=f'd(mean)/d({name})')[0] for name in names]
     difference_line, = path_axis.plot([], [], 'o-', markersize=4, label='Path finite difference')
     projection_line, = path_axis.plot([], [], 'o--', markersize=3, label='Previous gradient projected onto step')
-    mean_axis.set_title(f'Tally mean (point labels: parameters in {SURFACE_PARAMETER_UNITS})')
+    mean_axis.set_title(f'{tally_label} (point labels: parameters in {units})')
     derivative_axis.set_title('Partial geometry derivatives')
     path_axis.set_title('Change per distance along optimization path')
     mean_axis.set_ylabel('Tally mean')
-    derivative_axis.set_ylabel(f'Partial derivative [1/{SURFACE_PARAMETER_UNITS}]')
-    path_axis.set_ylabel(f'Path derivative [1/{SURFACE_PARAMETER_UNITS}]')
+    derivative_axis.set_ylabel(f'Partial derivative [1/{units}]')
+    path_axis.set_ylabel(f'Path derivative [1/{units}]')
     parameter_axis.set_title('Optimization parameter values')
-    parameter_axis.set_ylabel(f'Parameter value [{SURFACE_PARAMETER_UNITS}]')
+    parameter_axis.set_ylabel(f'Parameter value [{units}]')
     parameter_axis.set_xlabel('Evaluation / run number')
     parameter_axis.legend(fontsize=8)
     derivative_axis.legend(fontsize=8)
@@ -141,7 +139,7 @@ def create_animation(input_path, fps=5):
         for cursor in cursors:
             cursor.set_xdata([index, index])
         coordinates = ', '.join(f'{name}={value:.8g}' for name, value in zip(names, parameters[index]))
-        title.set_text(f'Optimization run {index} ({count}/{len(results)}) — {coordinates} {SURFACE_PARAMETER_UNITS}')
+        title.set_text(f'Optimization run {index} ({count}/{len(results)}) — {score} — {coordinates} {units}')
         return image, mean_line, *derivative_lines, *parameter_lines, difference_line, projection_line, pending, title, *cursors, *labels
 
     return FuncAnimation(

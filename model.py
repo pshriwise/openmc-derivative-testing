@@ -2,8 +2,12 @@ import openmc
 
 from config import OPTIMIZATION_PARAMETER_NAMES
 
-def build_model(parameter_names=None):
+def build_model(parameter_names=None, iron=None, tally=None):
     """Build a fresh model with stable IDs for simulation workflows."""
+    iron_parameters = {'x0': 0, 'y0': 0, 'z0': 0, 'r': 2}
+    iron_parameters.update(iron or {})
+    tally_options = {'score': 'absorption'}
+    tally_options.update(tally or {})
     # ---------------------------------------------------------------------------
     # Materials
     # ---------------------------------------------------------------------------
@@ -23,7 +27,7 @@ def build_model(parameter_names=None):
     # Geometry
     # ---------------------------------------------------------------------------
     # Iron sphere at the origin
-    iron_sphere = openmc.Sphere(surface_id=1, x0=0, y0=0, z0=0, r=2)
+    iron_sphere = openmc.Sphere(surface_id=1, **iron_parameters)
     iron_cell = openmc.Cell(cell_id=1, name='iron_sphere', fill=iron, region=-iron_sphere)
 
     # Water sphere centered at (20, 0, 0)
@@ -62,7 +66,7 @@ def build_model(parameter_names=None):
     settings.run_mode = 'fixed source'
     settings.source = source
     settings.batches = 100
-    settings.particles = 1000000
+    settings.particles = 1_00_000
 
     # ---------------------------------------------------------------------------
     # Tallies
@@ -70,7 +74,7 @@ def build_model(parameter_names=None):
     water_filter = openmc.CellFilter([water_cell], filter_id=1)
     flux_tally = openmc.Tally(tally_id=1, name='water_flux')
     flux_tally.filters = [water_filter]
-    flux_tally.scores = ['absorption']
+    flux_tally.scores = [tally_options['score']]
     flux_tally.estimator = 'collision'
 
     tallies = openmc.Tallies([flux_tally])
@@ -92,9 +96,9 @@ def build_model(parameter_names=None):
     return model
 
 
-def main(output_path="model.xml", parameter_names=None):
+def main(output_path="model.xml", parameter_names=None, iron=None, tally=None):
     """Generate and export the model used by optimization and sweeps."""
-    model = build_model(parameter_names)
+    model = build_model(parameter_names, iron=iron, tally=tally)
     model.export_to_model_xml(output_path)
     return model
 

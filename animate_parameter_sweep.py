@@ -7,8 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter, writers
 import numpy as np
 
-from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
-from plot_parameter_sweep import load_sweep, finite_difference_derivative
+from plot_parameter_sweep import load_sweep, finite_difference_derivative, history_metadata
 
 
 def history_images(results):
@@ -35,6 +34,10 @@ def create_animation(input_path, fps=5):
     results = load_sweep(input_path)
     if results.ndim != 1 or len(results) == 0:
         raise ValueError('Sweep results must be a nonempty one-dimensional array.')
+    metadata = history_metadata(results)
+    parameter_name, units = metadata['parameter'], metadata['units']
+    case_prefix = f"{metadata['name']}: " if metadata.get('name') else ''
+    score = metadata['tally']['score']
     parameter = results['parameter']
     mean = results['tally_mean']
     estimate = results['geometry_derivative']
@@ -65,13 +68,13 @@ def create_animation(input_path, fps=5):
         0.5, 0.5, 'Available after two runs', transform=difference_axis.transAxes,
         ha='center', va='center',
     )
-    mean_axis.set_title('Tally mean')
+    mean_axis.set_title(f'{score} tally mean')
     estimate_axis.set_title('Computed geometry derivative')
     difference_axis.set_title('Finite-difference derivative of observed tally values')
     mean_axis.set_ylabel('Tally mean')
     estimate_axis.set_ylabel('Derivative')
     difference_axis.set_ylabel('Derivative')
-    difference_axis.set_xlabel(f'Iron sphere {SURFACE_PARAMETER_NAME} [{SURFACE_PARAMETER_UNITS}]')
+    difference_axis.set_xlabel(f'Iron sphere {parameter_name} [{units}]')
     mean_axis.set_ylim(*padded_limits(mean))
     # Keep the derivative panels on the same fixed finite-difference scale.
     available = np.concatenate(differences)
@@ -96,7 +99,7 @@ def create_animation(input_path, fps=5):
         pending.set_visible(count < 2)
         for cursor in cursors:
             cursor.set_xdata([parameter[index], parameter[index]])
-        title.set_text(f'Run {index} ({count}/{len(results)}) — {SURFACE_PARAMETER_NAME} = {parameter[index]:.8g} {SURFACE_PARAMETER_UNITS}')
+        title.set_text(f'{case_prefix}Run {index} ({count}/{len(results)}) — {score} — {parameter_name} = {parameter[index]:.8g} {units}')
         return image, mean_line, estimate_line, difference_line, pending, title, *cursors
 
     animation = FuncAnimation(
