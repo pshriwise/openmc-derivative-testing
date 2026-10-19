@@ -66,7 +66,7 @@ def build_model(parameter_names=None, iron=None, tally=None):
     settings.run_mode = 'fixed source'
     settings.source = source
     settings.batches = 100
-    settings.particles = 1_00_000
+    settings.particles = 1_000_000
 
     # ---------------------------------------------------------------------------
     # Tallies

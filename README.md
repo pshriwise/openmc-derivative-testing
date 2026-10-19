@@ -170,6 +170,15 @@ MPLBACKEND=Agg python -m unittest test_history_images test_sweep_cases
 
 Animations use the embedded image for each history row and need only the NumPy file. Older histories without an `image` field must be regenerated before animation. The tests do not run neutron transport, but still import the OpenMC API and shared library.
 
+Both animations include a relative difference panel showing
+`100 × (finite difference − tallied derivative) / finite difference`, with a
+zero reference line and a fixed vertical scale from −100% to +100%.
+Sweep differences use only the points
+observed so far. Optimization differences compare each path secant with the
+previous tallied gradient projected along that step, using the path finite
+difference as the denominator. Zero finite differences and repeated optimization parameter
+points leave gaps because the relative difference is undefined.
+
 ## Saved data and existing outputs
 
 Current scalar sweep files contain `parameter`, `tally_mean`, `tally_std_dev`, `geometry_derivative`, `dJ`, and `datt`. Optimization histories add `parameter_names`; for multiple coordinates, the parameter and derivative fields are vectors in that saved name order. Load these with `numpy.load(path)`.

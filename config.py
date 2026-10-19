@@ -34,11 +34,35 @@ SWEEP_CASES = {
         'iron': {'r': 2.0, 'x0': 0.0, 'y0': 0.0, 'z0': 0.0},
         'tally': {'score': 'heating-local'},
     },
+    'radius_offset_heating': {
+        'parameter': 'r',
+        'num_values': 100,
+        'iron': {'r': 2.0, 'x0': 4.0, 'y0': 0.0, 'z0': 0.0},
+        'tally': {'score': 'heating-local'},
+    },
     'y_sweep_heating': {
         'parameter': 'y0',
         'num_values': 100,
         'iron': {'r': 3.0, 'x0': 6.0, 'y0': 0.0, 'z0': 0.0},
         'tally': {'score': 'heating-local'},
+    },
+    'radius_centered_absorption': {
+        'parameter': 'r',
+        'num_values': 100,
+        'iron': {'r': 2.0, 'x0': 0.0, 'y0': 0.0, 'z0': 0.0},
+        'tally': {'score': 'absorption'},
+    },
+    'radius_offset_absorption': {
+        'parameter': 'r',
+        'num_values': 100,
+        'iron': {'r': 2.0, 'x0': 4.0, 'y0': 0.0, 'z0': 0.0},
+        'tally': {'score': 'absorption'},
+    },
+    'y_sweep_absorption': {
+        'parameter': 'y0',
+        'num_values': 100,
+        'iron': {'r': 3.0, 'x0': 6.0, 'y0': 0.0, 'z0': 0.0},
+        'tally': {'score': 'absorption'},
     },
 }
 
