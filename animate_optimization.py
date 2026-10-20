@@ -8,9 +8,8 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter, writ
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
-from animate_parameter_sweep import history_images, padded_limits
-from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
-from plot_parameter_sweep import load_sweep
+from animate_parameter_sweep import history_images, padded_limits, relative_difference_percent
+from plot_parameter_sweep import load_sweep, history_metadata
 
 
 def history_coordinates(results):
@@ -23,14 +22,9 @@ def history_coordinates(results):
         derivatives = derivatives[:, None]
     if parameters.ndim != 2 or derivatives.shape != parameters.shape:
         raise ValueError('Parameter and derivative histories must have matching coordinate shapes.')
-    if 'parameter_names' in results.dtype.names:
-        names = tuple(np.atleast_1d(results['parameter_names'][0]))
-        if not np.all(results['parameter_names'] == results['parameter_names'][0]):
-            raise ValueError('Parameter names must remain consistent across evaluations.')
-    elif parameters.shape[1] == 1:
-        names = (SURFACE_PARAMETER_NAME,)
-    else:
-        raise ValueError('Vector histories must include saved parameter_names.')
+    names = tuple(np.atleast_1d(results['parameter_names'][0]))
+    if not np.all(results['parameter_names'] == results['parameter_names'][0]):
+        raise ValueError('Parameter names must remain consistent across evaluations.')
     if len(names) != parameters.shape[1] or len(set(names)) != len(names) or not all(names):
         raise ValueError('Expected one unique name per optimization coordinate.')
     return parameters, derivatives, names
@@ -62,23 +56,29 @@ def create_animation(input_path, fps=5):
     results = load_sweep(input_path)
     if results.ndim != 1 or len(results) == 0:
         raise ValueError('Optimization history must be a nonempty one-dimensional array.')
+    metadata = history_metadata(results)
+    units = metadata['units']
+    score = metadata['tally']['score']
+    tally_label = f'{score} tally mean'
     parameters, derivatives, names = history_coordinates(results)
     mean = results['tally_mean']
     if not all(np.all(np.isfinite(values)) for values in (parameters, mean, derivatives)):
         raise ValueError('Parameters, tally mean, and derivatives must be finite.')
     images = history_images(results)
     finite_difference, projection = path_derivatives(parameters, mean, derivatives)
+    residual = relative_difference_percent(finite_difference, projection)
     runs = np.arange(len(results))
 
-    fig = plt.figure(figsize=(14, 12), layout='constrained')
-    grid = fig.add_gridspec(4, 2, width_ratios=(1.3, 1))
+    fig = plt.figure(figsize=(14, 14), layout='constrained')
+    grid = fig.add_gridspec(5, 2, width_ratios=(1.3, 1))
     geometry_axis = fig.add_subplot(grid[:, 0])
     image = geometry_axis.imshow(images[0])
     geometry_axis.set_axis_off()
     mean_axis = fig.add_subplot(grid[0, 1])
     derivative_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
     path_axis = fig.add_subplot(grid[2, 1], sharex=mean_axis)
-    parameter_axis = fig.add_subplot(grid[3, 1], sharex=mean_axis)
+    residual_axis = fig.add_subplot(grid[3, 1], sharex=mean_axis)
+    parameter_axis = fig.add_subplot(grid[4, 1], sharex=mean_axis)
     parameter_lines = [parameter_axis.plot([], [], 'o-', markersize=4, label=name)[0]
                        for name in names]
     mean_line, = mean_axis.plot([], [], 'o-', markersize=4, color='tab:blue')
@@ -86,31 +86,39 @@ def create_animation(input_path, fps=5):
                                              label=f'd(mean)/d({name})')[0] for name in names]
     difference_line, = path_axis.plot([], [], 'o-', markersize=4, label='Path finite difference')
     projection_line, = path_axis.plot([], [], 'o--', markersize=3, label='Previous gradient projected onto step')
-    mean_axis.set_title(f'Tally mean (point labels: parameters in {SURFACE_PARAMETER_UNITS})')
+    residual_line, = residual_axis.plot([], [], 'o-', markersize=4, color='tab:purple')
+    residual_axis.axhline(0, color='black', linewidth=1, alpha=0.5)
+    mean_axis.set_title(f'{tally_label} (point labels: parameters in {units})')
     derivative_axis.set_title('Partial geometry derivatives')
     path_axis.set_title('Change per distance along optimization path')
+    residual_axis.set_title('100 × (path finite difference − projected)\n/ path finite difference')
     mean_axis.set_ylabel('Tally mean')
-    derivative_axis.set_ylabel(f'Partial derivative [1/{SURFACE_PARAMETER_UNITS}]')
-    path_axis.set_ylabel(f'Path derivative [1/{SURFACE_PARAMETER_UNITS}]')
+    derivative_axis.set_ylabel(f'Partial derivative [1/{units}]')
+    path_axis.set_ylabel(f'Path derivative [1/{units}]')
+    residual_axis.set_ylabel('Relative difference [%]')
     parameter_axis.set_title('Optimization parameter values')
-    parameter_axis.set_ylabel(f'Parameter value [{SURFACE_PARAMETER_UNITS}]')
+    parameter_axis.set_ylabel(f'Parameter value [{units}]')
     parameter_axis.set_xlabel('Evaluation / run number')
     parameter_axis.legend(fontsize=8)
     derivative_axis.legend(fontsize=8)
     path_axis.legend(fontsize=8)
     pending = path_axis.text(.5, .5, 'Requires a nonzero parameter step',
                              transform=path_axis.transAxes, ha='center')
+    residual_pending = residual_axis.text(.5, .5, 'Requires a nonzero step and finite difference',
+                                          transform=residual_axis.transAxes, ha='center')
     mean_axis.tick_params(labelbottom=False)
     derivative_axis.tick_params(labelbottom=False)
     path_axis.tick_params(labelbottom=False)
+    residual_axis.tick_params(labelbottom=False)
     cursors = []
     path_values = np.concatenate((finite_difference, projection))
     path_values = path_values[np.isfinite(path_values)]
     for axis, values in ((mean_axis, mean), (derivative_axis, derivatives),
                          (parameter_axis, parameters),
+                         (residual_axis, None),
                          (path_axis, path_values if path_values.size else np.array([0.]))):
         axis.set_xlim(-0.5, max(len(results) - 0.5, 0.5))
-        axis.set_ylim(*padded_limits(values))
+        axis.set_ylim(*((-100, 100) if axis is residual_axis else padded_limits(values)))
         axis.xaxis.set_major_locator(MaxNLocator(integer=True))
         axis.grid(True, alpha=0.3)
         cursors.append(axis.axvline(0, color='tab:red', linestyle='--', alpha=0.6))
@@ -135,14 +143,16 @@ def create_animation(input_path, fps=5):
             line.set_data(runs[:count], parameters[:count, column])
         difference_line.set_data(runs[:count], finite_difference[:count])
         projection_line.set_data(runs[:count], projection[:count])
+        residual_line.set_data(runs[:count], residual[:count])
         pending.set_visible(not np.any(np.isfinite(finite_difference[:count])))
+        residual_pending.set_visible(not np.any(np.isfinite(residual[:count])))
         for label_index, label in enumerate(labels):
             label.set_visible(label_index < count)
         for cursor in cursors:
             cursor.set_xdata([index, index])
         coordinates = ', '.join(f'{name}={value:.8g}' for name, value in zip(names, parameters[index]))
-        title.set_text(f'Optimization run {index} ({count}/{len(results)}) — {coordinates} {SURFACE_PARAMETER_UNITS}')
-        return image, mean_line, *derivative_lines, *parameter_lines, difference_line, projection_line, pending, title, *cursors, *labels
+        title.set_text(f'Optimization run {index} ({count}/{len(results)}) — {score} — {coordinates} {units}')
+        return image, mean_line, *derivative_lines, *parameter_lines, difference_line, projection_line, pending, title, residual_line, residual_pending, *cursors, *labels
 
     return FuncAnimation(
         fig, update, frames=len(results), interval=1000 / fps,

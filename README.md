@@ -18,9 +18,9 @@ OPTIMIZATION_PARAMETER_NAMES = ('r', 'y0', 'x0')
 
 Supported iron-sphere coefficients are `r` (radius) and `x0`, `y0`, `z0` (center coordinates), all in cm. For a radius sweep, set `SURFACE_PARAMETER_NAME = 'r'`. To optimize position only, set `OPTIMIZATION_PARAMETER_NAMES = ('x0', 'y0')`; for radius only, use the one-element tuple `('r',)`. Change bounds in `optimize.py`'s `get_constraints()` function.
 
-`model.py`'s `build_model()` assigns these names to `geom_derivative.surface_parameters`. Standalone `python model.py` uses `OPTIMIZATION_PARAMETER_NAMES`; the sweep driver overrides that list with just `SURFACE_PARAMETER_NAME`. Python callers can also pass `parameter_names` explicitly to `build_model()` or `optimize_parameter()`. The differentiated tally and surface are selected by `openmc.GeometricDerivative(flux_tally, iron_sphere, id=1)` in `model.py`. Changing the target surface or tally also requires updating the drivers, which currently reference surface 1, water surface 2, tally 1, and derivative 1. The collision-count collector removes geometric derivatives and always sweeps radius.
+`optimize.py`'s shared model setup replaces derivative 1's `surface_parameters` mapping with surface 1 and the parameters requested by the sweep or optimization, before exporting simulation inputs. Scalar sweeps use `SURFACE_PARAMETER_NAME` or the named case's `parameter`; optimization uses `OPTIMIZATION_PARAMETER_NAMES` or an explicit `parameter_names` argument to `optimize_parameter()`. Standalone `python model.py` uses the derivative settings in `build_model()`. Changing the target surface or tally also requires updating the drivers, which currently reference surface 1, water surface 2, tally 1, and derivative 1. The collision-count collector removes geometric derivatives and always sweeps radius.
 
-**Edit `model.py`'s `build_model()` to adjust the initial model.** Its labeled sections contain the material compositions and densities, sphere centers and radii, outer boundary, source location/direction/energy, transport batches and particles, and flux tally. In particular, the `iron_sphere = openmc.Sphere(...)` constructor sets the optimizer's initial radius and position; `water_sphere = openmc.Sphere(...)` sets the receiving geometry. Use the constructor values as the source of truth, since some nearby comments describe older positions.
+**Edit `model.py`'s `build_model()` to adjust the initial model.** Its labeled sections contain the material compositions and densities, sphere centers and radii, outer boundary, source location/direction/energy, transport batches and particles, and tally. The `iron_parameters` dictionary sets the default iron radius and position; `water_sphere = openmc.Sphere(...)` sets the receiving geometry. Named sweep cases can override iron coefficients and the tally score without editing this model.
 
 Run `python model.py` after those edits to regenerate `model.xml` for the collision-count workflow. `optimize.py` automatically rebuilds and exports the model at the start of each optimization or scalar sweep, so persistent changes to its initial model belong in `model.py`. Revisit parameter bounds when changing the geometry, and regenerate results with embedded geometry images for the revised experiment.
 
@@ -54,10 +54,70 @@ Run commands from the repository root. For plotting on a machine without a displ
 | `geometry_plots.py` | Shared helper module, without a command-line entrypoint. Computes a fixed XY extent and renders RGBA material slices with source markers in memory. Used by the simulation drivers. |
 | `config.py` | Shared settings, without a command-line entrypoint. Selects the swept coefficient, optimized coordinates, units, convergence tolerance, flux uncertainty trigger, and basin-hopping defaults. |
 | `test_history_images.py` | `unittest` checks for embedded image capture, scalar/vector history round trips, collision archives, and GIF rendering without external PNGs. Uses mocked transport and synthetic data. |
+| `sweep_cases.py` | Validates case names, sweep ranges, initial iron coefficients, and tally option structure before a batch starts. |
+| `test_sweep_cases.py` | Tests case selection, independent models and tally scores, incremental saving after failure, and saved plot/animation labels with mocked transport. |
 
 Each command-line analysis or simulation driver accepts `--help` for its complete options. `model.py` has no argument parser.
 
 ## Workflows
+
+### Run named sweep cases
+
+Define cases in `config.py`'s `SWEEP_CASES` dictionary. For example:
+
+```python
+SWEEP_CASES = {
+    'radius_centered': {
+        'parameter': 'r',
+        'bounds': (0.1, 6.0),
+        'num_values': 100,
+        'iron': {'r': 2.0, 'x0': 4.0, 'y0': 0.0, 'z0': 0.0},
+        'tally': {'score': 'flux'},
+    },
+    'position_absorption': {
+        'parameter': 'y0',
+        'bounds': (-5.0, 5.0),
+        'num_values': 50,
+        'iron': {'r': 2.0, 'x0': 4.0, 'z0': 0.0},
+        'tally': {'score': 'absorption'},
+    },
+}
+```
+
+`parameter` is required. `bounds` is optional: omit it (or use `None`) to use
+`get_constraints(parameter)` in `optimize.py`, evaluated after the case's iron
+overrides are applied. Explicit bounds override those defaults. The resolved
+bounds are saved in the history metadata. Bounds are inclusive and increasing;
+`num_values` defaults to 100 and must be at least two. `iron` holds initial
+coefficients (`r`, `x0`, `y0`, `z0`), including the swept coefficient if desired.
+Sweep values replace that coefficient at each step; the others remain fixed.
+The initial coefficient is restored after the sweep, including on failure.
+Unspecified coefficients use the model defaults. `tally` currently accepts one
+`score`, passed to the existing water-cell tally before its geometry derivative
+is created; omitting it retains the model's score. The estimator remains
+`collision`. Choose a score supported by your OpenMC geometric-derivative build.
+
+```sh
+python optimize.py --sweep --all-cases
+python optimize.py --sweep --cases radius_centered radius_offset
+python optimize.py --sweep --all-cases --output-dir experiment_results
+python animate_parameter_sweep.py results/radius_centered.npy
+python plot_parameter_sweep.py results/radius_centered.npy
+```
+
+The shipped configuration contains `radius_centered` and `radius_offset`.
+All selected case configurations are checked before transport starts. Cases run
+sequentially in dictionary order with `--all-cases`, or in the order listed after
+`--cases`. Each starts with a fresh model and saves `results/<case>.npy` by
+default. The history includes data, images, parameter names, and case metadata;
+plots and animations use the saved parameter, units, and tally score even after
+`config.py` changes. Completed evaluations are saved atomically. A failed case
+stops the batch and retains its completed evaluations and earlier case files.
+Rerunning a case replaces its history as new evaluations complete.
+
+Use `--output-dir` for batches; `-n` and `-o` apply only to the single-sweep
+workflow below. Case names may contain letters, digits, underscores, and hyphens,
+and must start with a letter or digit.
 
 ### Sweep and compare derivatives
 
@@ -105,14 +165,43 @@ Both animation scripts accept `--fps` (default 5), `--dpi` (default 100), and `-
 
 ```sh
 python animate_parameter_sweep.py parameter_sweep.npy -o parameter_sweep_animation.mp4 --fps 10
-MPLBACKEND=Agg python -m unittest test_history_images
+MPLBACKEND=Agg python -m unittest test_history_images test_sweep_cases
 ```
 
 Animations use the embedded image for each history row and need only the NumPy file. Older histories without an `image` field must be regenerated before animation. The tests do not run neutron transport, but still import the OpenMC API and shared library.
 
+Both animations include a relative difference panel showing
+`100 × (finite difference − tallied derivative) / finite difference`, with a
+zero reference line and a fixed vertical scale from −100% to +100%.
+Sweep differences use only the points
+observed so far. Optimization differences compare each path secant with the
+previous tallied gradient projected along that step, using the path finite
+difference as the denominator. Zero finite differences and repeated optimization parameter
+points leave gaps because the relative difference is undefined.
+
 ## Saved data and existing outputs
 
 Current scalar sweep files contain `parameter`, `tally_mean`, `tally_std_dev`, `geometry_derivative`, `dJ`, and `datt`. Optimization histories add `parameter_names`; for multiple coordinates, the parameter and derivative fields are vectors in that saved name order. Load these with `numpy.load(path)`.
+
+New scalar sweeps also save `parameter_names` and `case_metadata`. The latter is
+a JSON string repeated per row, containing the case name (null for a standalone
+sweep), parameter, units, bounds, point count, iron overrides, initial iron
+coefficients, and resolved tally score/estimator. Read it without pickle:
+
+```python
+import json
+import numpy as np
+
+history = np.load('results/radius_centered.npy')
+case = json.loads(history['case_metadata'][0])
+```
+
+New optimization histories also embed `case_metadata`, with the resolved tally
+score/estimator, units, initial iron coefficients, coordinate names and bounds,
+optimization method, and whether the computed gradient is used. Both animation
+scripts include the saved tally score in the main title. Plotting and animation
+require saved metadata and parameter names; regenerate older histories that lack
+these fields.
 
 Both workflows always render geometry directly into an `image` field, including
 its axes, title, legend, and source markers. No separate PNGs are written. The field

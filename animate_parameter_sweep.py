@@ -7,8 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter, writers
 import numpy as np
 
-from config import SURFACE_PARAMETER_NAME, SURFACE_PARAMETER_UNITS
-from plot_parameter_sweep import load_sweep, finite_difference_derivative
+from plot_parameter_sweep import load_sweep, finite_difference_derivative, history_metadata
 
 
 def history_images(results):
@@ -28,6 +27,13 @@ def padded_limits(values):
     return lower - padding, upper + padding
 
 
+def relative_difference_percent(finite_difference, tallied):
+    """Return the percent difference relative to the finite-difference derivative."""
+    valid = np.isfinite(finite_difference) & np.isfinite(tallied) & (finite_difference != 0)
+    return 100 * np.divide(finite_difference - tallied, finite_difference,
+                           out=np.full_like(finite_difference, np.nan), where=valid)
+
+
 def create_animation(input_path, fps=5):
     """Build frames in saved run order, using only observed points in each frame."""
     if fps <= 0:
@@ -35,6 +41,10 @@ def create_animation(input_path, fps=5):
     results = load_sweep(input_path)
     if results.ndim != 1 or len(results) == 0:
         raise ValueError('Sweep results must be a nonempty one-dimensional array.')
+    metadata = history_metadata(results)
+    parameter_name, units = metadata['parameter'], metadata['units']
+    case_prefix = f"{metadata['name']}: " if metadata.get('name') else ''
+    score = metadata['tally']['score']
     parameter = results['parameter']
     mean = results['tally_mean']
     estimate = results['geometry_derivative']
@@ -50,41 +60,55 @@ def create_animation(input_path, fps=5):
         finite_difference_derivative(parameter[:count], mean[:count])
         for count in range(2, len(results) + 1)
     ]
-    fig = plt.figure(figsize=(12, 7), layout='constrained')
-    grid = fig.add_gridspec(3, 2, width_ratios=(1.4, 1))
+    residuals = [relative_difference_percent(values, estimate[:len(values)])
+                 for values in differences]
+    fig = plt.figure(figsize=(12, 9), layout='constrained')
+    grid = fig.add_gridspec(4, 2, width_ratios=(1.4, 1))
     geometry_axis = fig.add_subplot(grid[:, 0])
     image = geometry_axis.imshow(images[0])
     geometry_axis.set_axis_off()
     mean_axis = fig.add_subplot(grid[0, 1])
     estimate_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
     difference_axis = fig.add_subplot(grid[2, 1], sharex=mean_axis)
+    residual_axis = fig.add_subplot(grid[3, 1], sharex=mean_axis)
     mean_line, = mean_axis.plot([], [], 'o-', markersize=3, color='tab:blue')
     estimate_line, = estimate_axis.plot([], [], 'o-', markersize=3, color='tab:orange')
     difference_line, = difference_axis.plot([], [], 'o-', markersize=3, color='tab:green')
+    residual_line, = residual_axis.plot([], [], 'o-', markersize=3, color='tab:purple')
+    residual_axis.axhline(0, color='black', linewidth=1, alpha=0.5)
     pending = difference_axis.text(
         0.5, 0.5, 'Available after two runs', transform=difference_axis.transAxes,
         ha='center', va='center',
     )
-    mean_axis.set_title('Tally mean')
+    residual_pending = residual_axis.text(
+        0.5, 0.5, 'Requires two runs and a nonzero finite difference',
+        transform=residual_axis.transAxes,
+        ha='center', va='center',
+    )
+    mean_axis.set_title(f'{score} tally mean')
     estimate_axis.set_title('Computed geometry derivative')
     difference_axis.set_title('Finite-difference derivative of observed tally values')
+    residual_axis.set_title('100 × (finite difference − tallied) / finite difference')
     mean_axis.set_ylabel('Tally mean')
     estimate_axis.set_ylabel('Derivative')
     difference_axis.set_ylabel('Derivative')
-    difference_axis.set_xlabel(f'Iron sphere {SURFACE_PARAMETER_NAME} [{SURFACE_PARAMETER_UNITS}]')
+    residual_axis.set_ylabel('Relative difference [%]')
+    residual_axis.set_xlabel(f'Iron sphere {parameter_name} [{units}]')
     mean_axis.set_ylim(*padded_limits(mean))
     # Keep the derivative panels on the same fixed finite-difference scale.
     available = np.concatenate(differences)
     derivative_limits = padded_limits(available if available.size else estimate)
     for axis in (estimate_axis, difference_axis):
         axis.set_ylim(*derivative_limits)
+    residual_axis.set_ylim(-100, 100)
     cursors = []
-    for axis in (mean_axis, estimate_axis, difference_axis):
+    for axis in (mean_axis, estimate_axis, difference_axis, residual_axis):
         axis.set_xlim(*padded_limits(parameter))
         axis.grid(True, alpha=0.3)
         cursors.append(axis.axvline(parameter[0], color='tab:red', linestyle='--', alpha=0.6))
     mean_axis.tick_params(labelbottom=False)
     estimate_axis.tick_params(labelbottom=False)
+    difference_axis.tick_params(labelbottom=False)
     title = fig.suptitle('')
 
     def update(index):
@@ -93,11 +117,13 @@ def create_animation(input_path, fps=5):
         mean_line.set_data(parameter[:count], mean[:count])
         estimate_line.set_data(parameter[:count], estimate[:count])
         difference_line.set_data(parameter[:count] if count >= 2 else [], differences[index])
+        residual_line.set_data(parameter[:count] if count >= 2 else [], residuals[index])
         pending.set_visible(count < 2)
+        residual_pending.set_visible(not np.any(np.isfinite(residuals[index])))
         for cursor in cursors:
             cursor.set_xdata([parameter[index], parameter[index]])
-        title.set_text(f'Run {index} ({count}/{len(results)}) — {SURFACE_PARAMETER_NAME} = {parameter[index]:.8g} {SURFACE_PARAMETER_UNITS}')
-        return image, mean_line, estimate_line, difference_line, pending, title, *cursors
+        title.set_text(f'{case_prefix}Run {index} ({count}/{len(results)}) — {score} — {parameter_name} = {parameter[index]:.8g} {units}')
+        return image, mean_line, estimate_line, difference_line, pending, title, residual_line, residual_pending, *cursors
 
     animation = FuncAnimation(
         fig, update, frames=len(results), interval=1000 / fps,

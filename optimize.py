@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from collections import namedtuple
 from functools import partial
@@ -11,6 +12,7 @@ import openmc.lib
 from scipy.optimize import minimize, basinhopping
 
 import geometry_plots
+from sweep_cases import validate_cases, validate_sweep_options
 from model import main as generate_model
 from config import (
     FLUX_TRIGGER_REL_ERR, TRIGGER_MAX_BATCHES_FACTOR, TRIGGER_BATCH_INTERVAL,
@@ -18,6 +20,7 @@ from config import (
     OPTIMIZATION_PARAMETER_NAMES, OPTIMIZATION_METHOD,
     BASIN_HOP_ITERATIONS, BASIN_HOP_STEP_FRACTION,
     BASIN_HOP_TEMPERATURE, BASIN_HOP_SEED,
+    SURFACE_PARAMETER_UNITS, SWEEP_CASES,
 )
 
 
@@ -25,11 +28,17 @@ model = None
 model_surfaces = None
 
 
-def initialize_model(parameter_names=None):
+def initialize_model(parameter_names=None, iron=None, tally=None):
     """Generate a fresh model before starting an optimization or sweep."""
     global model, model_surfaces
-    model = generate_model(parameter_names=parameter_names)
+    openmc.reset_auto_ids()
+    model = generate_model(parameter_names=parameter_names, iron=iron, tally=tally)
     model_surfaces = model.geometry.get_all_surfaces()
+    if parameter_names is not None:
+        # The driver must differentiate the coordinates it will evaluate,
+        # regardless of the defaults configured by the model builder.
+        derivative = next(item for item in model.geometry_derivatives if item.id == 1)
+        derivative.surface_parameters = {model_surfaces[1]: list(parameter_names)}
 
 runtime_args = ['-s', '10']
 
@@ -48,7 +57,7 @@ SIMULATION_SAMPLE_DTYPE = np.dtype([
     ('datt', 'f8'),
 ])
 
-def samples_to_array(samples, parameter_names=None):
+def samples_to_array(samples, parameter_names=None, metadata=None):
     """Build a structured history with optional uint8 RGBA image arrays."""
     dtype = SIMULATION_SAMPLE_DTYPE
     rows = [tuple(sample[:len(SIMULATION_SAMPLE_DTYPE.names)]) for sample in samples]
@@ -77,15 +86,20 @@ def samples_to_array(samples, parameter_names=None):
             raise ValueError('History images must have matching shapes and uint8 pixels.')
         dtype = np.dtype(dtype.descr + [('image', 'u1', shape)])
         rows = [row + (image,) for row, image in zip(rows, images)]
+    if metadata is not None:
+        serialized = json.dumps(metadata, sort_keys=True, allow_nan=False)
+        dtype = np.dtype(dtype.descr + [('case_metadata', f'U{len(serialized)}')])
+        rows = [row + (serialized,) for row in rows]
     return np.array(rows, dtype=dtype)
 
 
-def save_history(samples, output_path, parameter_names=None):
+def save_history(samples, output_path, parameter_names=None, metadata=None):
     """Replace the NumPy history atomically so completed evaluations survive."""
     output_path = Path(output_path)
     if output_path.suffix != '.npy':
         output_path = Path(str(output_path) + '.npy')
-    results = samples_to_array(samples, parameter_names)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    results = samples_to_array(samples, parameter_names, metadata)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(dir=output_path.parent, suffix='.npy',
@@ -177,7 +191,7 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
         try:
             openmc.lib.run(output=False)
             num_realizations = tally.num_realizations
-            rows = [geom_derivative.surface_parameters.index(name) for name in names]
+            rows = [geom_derivative.surface_parameters[1].index(name) for name in names]
             normalization = max(num_realizations, 1)
             def components(values):
                 values = np.asarray(values)
@@ -199,6 +213,7 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
                 flux_rel_err = np.inf
             else:
                 flux_rel_err = sample.tally_std_dev / abs(sample.tally_mean)
+            print("Parameter value:", float(parameter_value[0]))
             print("Tally mean:", sample.tally_mean)
             print("Tally std. dev.:", sample.tally_std_dev)
             print("Tally rel. err.:", flux_rel_err)
@@ -270,7 +285,7 @@ def update_parameter(new_parameter):
     model.export_to_model_xml()
 
 def flux_objective(parameter, samples=None, plot_extent=None,
-                   output_path=None, use_jac=True, parameter_names=None):
+                   output_path=None, use_jac=True, parameter_names=None, metadata=None):
     """Return the flux mean, optionally with its computed gradient."""
     names = validate_parameter_names(OPTIMIZATION_PARAMETER_NAMES if parameter_names is None else parameter_names)
     update_parameters(parameter, names)
@@ -281,7 +296,7 @@ def flux_objective(parameter, samples=None, plot_extent=None,
     if samples is not None:
         samples.append(sample)
         if output_path is not None:
-            save_history(samples, output_path, parameter_names=names)
+            save_history(samples, output_path, parameter_names=names, metadata=metadata)
     objective = sample.tally_mean
     if not use_jac:
         return objective
@@ -289,6 +304,18 @@ def flux_objective(parameter, samples=None, plot_extent=None,
     if gradient.shape != (len(names),) or not np.all(np.isfinite(gradient)):
         raise ValueError("Expected one finite gradient component per parameter.")
     return objective, gradient
+
+
+def model_metadata():
+    """Snapshot the resolved geometry and tally settings for a saved history."""
+    current_tally = next(item for item in model.tallies if item.id == 1)
+    return {
+        'units': SURFACE_PARAMETER_UNITS,
+        'initial_iron': {name: float(model_surfaces[1].coefficients[name])
+                         for name in ('r', 'x0', 'y0', 'z0')},
+        'tally': {'score': current_tally.scores[0], 'estimator': current_tally.estimator},
+    }
+
 
 class BoundedBasinStep:
     """Jump in all coordinates, scaling distances by their bound widths."""
@@ -327,12 +354,18 @@ def optimize_parameter(output_path='optimization_history.npy',
     print("Initial iron sphere parameter:", initial_value)
     bounds = [get_constraints(name) for name in names]
     print("Optimization bounds:", bounds)
+    metadata = {
+        **model_metadata(), 'parameter_names': list(names),
+        'bounds': [[float(lower), float(upper)] for lower, upper in bounds],
+        'method': method, 'use_jac': use_jac,
+    }
     samples = []
     convergence = ParameterConvergence(initial_value)
     plot_extent = optimization_plot_extent(names, bounds)
     objective = partial(
         flux_objective, samples=samples, plot_extent=plot_extent,
         output_path=output_path, use_jac=use_jac, parameter_names=names,
+        metadata=metadata,
     )
     local_options = dict(method='L-BFGS-B', jac=True if use_jac else None, bounds=bounds)
     if method == 'local':
@@ -368,33 +401,62 @@ def optimize_parameter(output_path='optimization_history.npy',
     update_parameters(result.x, names)
     return result
 
-def collect_parameter_sweep(num_values=100, output_path='parameter_sweep.npy'):
+def collect_parameter_sweep(num_values=100, output_path='parameter_sweep.npy',
+                            parameter=SURFACE_PARAMETER_NAME, bounds=None,
+                            iron=None, tally=None, case_name=None):
     """Save scalar sweep results and geometry images in a single NumPy file."""
-    initialize_model((SURFACE_PARAMETER_NAME,))
-    initial_parameter = get_parameter()
-    lower_bound, upper_bound = get_constraints()
+    # Check supplied options before building the model needed for default bounds.
+    validate_sweep_options(parameter, bounds, num_values, iron, tally)
+    names = validate_parameter_names((parameter,))
+    initialize_model(names, iron=iron, tally=tally)
+    bounds = get_constraints(parameter) if bounds is None else bounds
+    options = validate_sweep_options(parameter, bounds, num_values, iron, tally)
+    initial_parameter = get_parameters(names)
+    lower_bound, upper_bound = options['bounds']
     parameters = np.linspace(lower_bound, upper_bound, num_values, endpoint=True)
-    plot_extent = parameter_plot_extent(upper_bound)
+    plot_extent = geometry_plots.parameter_plot_extent(
+        model, upper_bound, parameter_name=parameter, min_parameter=lower_bound,
+    )
+    metadata = {
+        **options, 'name': case_name, **model_metadata(),
+    }
     samples = []
 
     try:
-        for run_index, parameter in enumerate(parameters):
-            update_parameter(float(parameter))
+        for run_index, parameter_value in enumerate(parameters):
+            update_parameters([float(parameter_value)], names)
             samples.append(evaluate_current_parameter(
-                run_index=run_index, plot_extent=plot_extent,
+                run_index=run_index, plot_extent=plot_extent, parameter_names=names,
             ))
-            save_history(samples, output_path)
+            save_history(samples, output_path, parameter_names=names, metadata=metadata)
     finally:
-        update_parameter(initial_parameter)
+        update_parameters(initial_parameter, names)
 
-    results = samples_to_array(samples)
+    results = samples_to_array(samples, parameter_names=names, metadata=metadata)
     print("Saved parameter sweep results to:", output_path)
     return results
+
+
+def collect_sweep_cases(case_names=None, output_dir='results', cases=None):
+    """Run validated cases sequentially and return their output paths."""
+    selected = validate_cases(SWEEP_CASES if cases is None else cases, case_names)
+    output_dir = Path(output_dir)
+    paths = {}
+    for name, options in selected.items():
+        path = output_dir / f'{name}.npy'
+        print(f'Running sweep case: {name}')
+        collect_parameter_sweep(output_path=path, case_name=name, **options)
+        paths[name] = path
+    return paths
 
 def main():
     parser = argparse.ArgumentParser(description='Optimize or sweep the iron sphere surface parameter.')
     parser.add_argument('--sweep', action='store_true', help='Evaluate a parameter sweep.')
-    parser.add_argument('-n', '--num-values', type=int, default=100)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument('--all-cases', action='store_true', help='Run every SWEEP_CASES entry in config.py.')
+    selection.add_argument('--cases', nargs='+', metavar='NAME', help='Run selected SWEEP_CASES entries in this order.')
+    parser.add_argument('--output-dir', help='Directory for case histories (default: results).')
+    parser.add_argument('-n', '--num-values', type=int, help='Single-sweep point count (default: 100).')
     parser.add_argument('-o', '--output', help='NumPy output file (default: optimization_history.npy, or parameter_sweep.npy with --sweep).')
     parser.add_argument('--no-jac', action='store_true',
                         help='Let L-BFGS-B estimate gradients numerically (jac=None).')
@@ -409,8 +471,21 @@ def main():
     parser.add_argument('--hop-seed', type=int, default=BASIN_HOP_SEED,
                         help='Random seed for reproducible basin jumps.')
     args = parser.parse_args()
+    if args.all_cases or args.cases is not None:
+        if not args.sweep:
+            parser.error('--all-cases and --cases require --sweep.')
+        if args.output is not None or args.num_values is not None:
+            parser.error('Named cases use their configured point counts and --output-dir; omit -n and -o.')
+        try:
+            collect_sweep_cases(args.cases, args.output_dir or 'results')
+        except ValueError as error:
+            parser.error(str(error))
+        return
+    if args.output_dir is not None:
+        parser.error('--output-dir requires --all-cases or --cases.')
     if args.sweep:
-        collect_parameter_sweep(args.num_values, args.output or 'parameter_sweep.npy')
+        collect_parameter_sweep(100 if args.num_values is None else args.num_values,
+                                args.output or 'parameter_sweep.npy')
         return
     result = optimize_parameter(args.output or 'optimization_history.npy',
                                 use_jac=not args.no_jac,

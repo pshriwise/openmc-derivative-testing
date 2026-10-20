@@ -1,9 +1,9 @@
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-
 
 REQUIRED_FIELDS = (
     'parameter',
@@ -12,6 +12,8 @@ REQUIRED_FIELDS = (
     'geometry_derivative',
     'dJ',
     'datt',
+    'parameter_names',
+    'case_metadata',
 )
 
 def load_sweep(path):
@@ -28,6 +30,16 @@ def load_sweep(path):
     return results
 
 
+def history_metadata(results):
+    """Read the case settings embedded in a nonempty history."""
+    if results.ndim != 1 or len(results) == 0:
+        raise ValueError('History must be a nonempty one-dimensional array.')
+    encoded = results['case_metadata']
+    if not np.all(encoded == encoded[0]):
+        raise ValueError('Case metadata must be consistent across history rows.')
+    return json.loads(str(encoded[0]))
+
+
 def finite_difference_derivative(parameter, values):
     """Estimate d(values)/d(parameter) from the evaluated sweep results."""
     if len(parameter) < 2:
@@ -42,6 +54,10 @@ def finite_difference_derivative(parameter, values):
 def plot_parameter_sweep(input_path, output_path, simple=False):
     """Plot sweep result fields against the swept parameter parameter."""
     results = load_sweep(input_path)
+    metadata = history_metadata(results)
+    parameter_label = f"Iron sphere {metadata['parameter']} [{metadata['units']}]"
+    score = metadata['tally']['score']
+    tally_label = f'{score} tally mean'
     order = np.argsort(results['parameter'])
     parameter = results['parameter'][order]
     tally_mean = results['tally_mean'][order]
@@ -97,7 +113,7 @@ def plot_parameter_sweep(input_path, output_path, simple=False):
         linewidth=1,
         label=min_parameter_label,
     )
-    mean_axis.set_title('Flux tally mean with +/- 3 std. dev.')
+    mean_axis.set_title(f'{tally_label} with +/- 3 std. dev.')
     mean_axis.set_ylabel('Tally Mean')
     mean_axis.grid(True, alpha=0.3)
     mean_axis.legend(loc='best')
@@ -232,7 +248,11 @@ def plot_parameter_sweep(input_path, output_path, simple=False):
         ratio_axis.grid(True, alpha=0.3)
         ratio_axis.legend(loc='best')
 
-    fig.suptitle('Parameter Sweep Results')
+    for axis in fig.axes:
+        if axis.get_xlabel():
+            axis.set_xlabel(parameter_label)
+    case_name = metadata.get('name')
+    fig.suptitle(f'Sweep: {case_name}' if case_name else 'Parameter Sweep Results')
     fig.savefig(output_path, dpi=200)
     return fig
 
