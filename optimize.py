@@ -34,6 +34,11 @@ def initialize_model(parameter_names=None, iron=None, tally=None):
     openmc.reset_auto_ids()
     model = generate_model(parameter_names=parameter_names, iron=iron, tally=tally)
     model_surfaces = model.geometry.get_all_surfaces()
+    if parameter_names is not None:
+        # The driver must differentiate the coordinates it will evaluate,
+        # regardless of the defaults configured by the model builder.
+        derivative = next(item for item in model.geometry_derivatives if item.id == 1)
+        derivative.surface_parameters = {model_surfaces[1]: list(parameter_names)}
 
 runtime_args = ['-s', '10']
 
@@ -186,7 +191,7 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
         try:
             openmc.lib.run(output=False)
             num_realizations = tally.num_realizations
-            rows = [geom_derivative.surface_parameters.index(name) for name in names]
+            rows = [geom_derivative.surface_parameters[1].index(name) for name in names]
             normalization = max(num_realizations, 1)
             def components(values):
                 values = np.asarray(values)
@@ -208,6 +213,7 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
                 flux_rel_err = np.inf
             else:
                 flux_rel_err = sample.tally_std_dev / abs(sample.tally_mean)
+            print("Parameter value:", float(parameter_value[0]))
             print("Tally mean:", sample.tally_mean)
             print("Tally std. dev.:", sample.tally_std_dev)
             print("Tally rel. err.:", flux_rel_err)

@@ -4,9 +4,9 @@ from config import OPTIMIZATION_PARAMETER_NAMES
 
 def build_model(parameter_names=None, iron=None, tally=None):
     """Build a fresh model with stable IDs for simulation workflows."""
-    iron_parameters = {'x0': 0, 'y0': 0, 'z0': 0, 'r': 2}
+    iron_parameters = {'x0': 5, 'y0': 2, 'z0': 0, 'r': 2}
     iron_parameters.update(iron or {})
-    tally_options = {'score': 'absorption'}
+    tally_options = {'score': 'flux'}
     tally_options.update(tally or {})
     # ---------------------------------------------------------------------------
     # Materials
@@ -79,11 +79,9 @@ def build_model(parameter_names=None, iron=None, tally=None):
 
     tallies = openmc.Tallies([flux_tally])
 
+    surface_parameters = {iron_sphere : ['y0']}
 
-    geom_derivative = openmc.GeometricDerivative(flux_tally, iron_sphere, id=1)
-    geom_derivative.surface_parameters = list(
-        OPTIMIZATION_PARAMETER_NAMES if parameter_names is None else parameter_names
-    )
+    geom_derivative = openmc.GeometricDerivative(flux_tally, surface_parameters, id=1)
 
     # ---------------------------------------------------------------------------
     # Export

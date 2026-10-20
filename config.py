@@ -2,7 +2,7 @@
 
 SURFACE_PARAMETER_NAME = 'r'
 # Ordered coordinates optimized together, e.g. ('x0', 'y0').
-OPTIMIZATION_PARAMETER_NAMES = ['r']
+OPTIMIZATION_PARAMETER_NAMES = ['r', 'x0', 'y0']
 SURFACE_PARAMETER_UNITS = 'cm'
 
 # Run all cases with: python optimize.py --sweep --all-cases
