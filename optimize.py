@@ -177,6 +177,7 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
     """Return named results for the current geometry parameter value."""
     names = (SURFACE_PARAMETER_NAME,) if parameter_names is None else parameter_names
     parameter_value = get_parameters(names)
+    print(f"Evaluating parameter {names} = {parameter_value} cm for run index {run_index}.")
     if plot_extent is None:
         plot_extent = (parameter_plot_extent(get_constraints()[1]) if parameter_names is None
                        else optimization_plot_extent(names, [get_constraints(name) for name in names]))
