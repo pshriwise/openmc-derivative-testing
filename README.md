@@ -1,5 +1,10 @@
 # OpenMC geometric derivative experiments
 
+For **INT-based DAGMC surface-mesh optimization**, start with
+[surface_mesh/README.md](surface_mesh/README.md). It covers setup, transport,
+LargeSteps/Adam, remeshing, continuation, adaptive sampling, and visualization.
+The scalar sphere experiments below are independent.
+
 This repository explores how changing an iron sphere's radius and position affects neutron flux in a water sphere. It compares OpenMC geometric derivatives with finite differences, uses those derivatives to minimize the water flux, and separates flux contributions by collision count.
 
 The model in `model.py` uses a 14.1 MeV point neutron source at the origin directed uniformly into the positive-x hemisphere. The iron sphere starts at `(4, 5, 0)` cm with radius 2 cm; the water sphere is at `(25, 0, 0)` cm with radius 5 cm. Both sit in a void bounded by a vacuum sphere of radius 1000 cm. Tally 1, `water_flux`, measures collision-estimator flux in the water cell. Geometric derivative 1 differentiates that tally with respect to coefficients of iron surface 1.
@@ -165,7 +170,7 @@ Both animation scripts accept `--fps` (default 5), `--dpi` (default 100), and `-
 
 ```sh
 python animate_parameter_sweep.py parameter_sweep.npy -o parameter_sweep_animation.mp4 --fps 10
-MPLBACKEND=Agg python -m unittest test_history_images test_sweep_cases
+MPLBACKEND=Agg OMP_NUM_THREADS=2 python -m unittest test_history_images test_sweep_cases test_mesh_plots
 ```
 
 Animations use the embedded image for each history row and need only the NumPy file. Older histories without an `image` field must be regenerated before animation. The tests do not run neutron transport, but still import the OpenMC API and shared library.
@@ -221,6 +226,34 @@ plt.show()
 Embedded pixels in `.npy` histories are uncompressed and use about 4.9 MB per
 1350 × 900 image. Both animation scripts read these pixels directly from the
 history file.
+
+When the model contains the `mesh_flux` regular-mesh tally, optimization and sweep
+runs also save `mesh_mean` (voxel-integrated means in x, y, z order),
+`mesh_lower_left`, `mesh_upper_right`, and `mesh_score` in each history row.
+Pass `--mesh` to either animation script to draw its XY heatmap beneath the geometry
+on the same axes, using a fixed logarithmic color scale across all evaluations.
+The mesh is drawn first and geometry on top, with transparent void regions.
+Zero and negative mesh values are masked. The mesh layer is hidden by
+default; Python callers can enable it with `create_animation(..., show_mesh=True)`.
+For example:
+
+```bash
+python animate_parameter_sweep.py parameter_sweep.npy --mesh
+python animate_optimization.py optimization_history.npy --mesh
+```
+
+The heatmap sums through the mesh's full z extent and
+divides by each XY column's volume: a depth-averaged, volume-normalized score per
+source particle (flux in cm⁻², heating in eV/cm³, absorption in cm⁻³).
+The displayed bounds and score come from the saved history. Existing histories
+without mesh fields still animate with the geometry alone; requesting `--mesh`
+for those histories reports an error. New histories include optional
+`image_extent` and `plot_extent` fields for precise image alignment. For older
+CSG histories, the plotter recovers the view from saved initial iron coefficients
+and parameter bounds, the fixed geometry/source in `model.py`, and the axes frame
+in each saved image. White void pixels become transparent at display time.
+No simulation rerun or modification of the history file is needed to overlay
+existing mesh results.
 
 Collision `.npz` files contain `radii`, `actual_radii`, `collision_bins`, `tally_ids`, `tally_names`, `mean`, `std_dev`, `collision_sum`, `score_name`, `model_xml`, and `image`. The image array contains one RGBA frame per radius. The mean and uncertainty arrays have shape `(tallies, radius points, collision bins)`; the sum has shape `(tallies, radius points)`. The existing collision archive has shape `(1, 100, 20)` for its mean array.
 

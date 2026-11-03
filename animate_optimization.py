@@ -10,6 +10,7 @@ import numpy as np
 
 from animate_parameter_sweep import history_images, padded_limits, relative_difference_percent
 from plot_parameter_sweep import load_sweep, history_metadata
+from geometry_plots import HistoryGeometryPlot
 
 
 def history_coordinates(results):
@@ -49,8 +50,8 @@ def path_derivatives(parameters, mean, derivatives):
     return finite_difference, projection
 
 
-def create_animation(input_path, fps=5):
-    """Animate all coordinates in evaluation order, including line-search runs."""
+def create_animation(input_path, fps=5, show_mesh=False):
+    """Animate evaluations, optionally including the saved mesh tally."""
     if not np.isfinite(fps) or fps <= 0:
         raise ValueError('fps must be finite and positive.')
     results = load_sweep(input_path)
@@ -65,15 +66,15 @@ def create_animation(input_path, fps=5):
     if not all(np.all(np.isfinite(values)) for values in (parameters, mean, derivatives)):
         raise ValueError('Parameters, tally mean, and derivatives must be finite.')
     images = history_images(results)
+    if show_mesh and 'mesh_mean' not in results.dtype.names:
+        raise ValueError('History has no mesh tally data; regenerate it with optimize.py.')
     finite_difference, projection = path_derivatives(parameters, mean, derivatives)
     residual = relative_difference_percent(finite_difference, projection)
     runs = np.arange(len(results))
 
     fig = plt.figure(figsize=(14, 14), layout='constrained')
     grid = fig.add_gridspec(5, 2, width_ratios=(1.3, 1))
-    geometry_axis = fig.add_subplot(grid[:, 0])
-    image = geometry_axis.imshow(images[0])
-    geometry_axis.set_axis_off()
+    geometry_plot = HistoryGeometryPlot(fig, grid[:, 0], results, images, show_mesh)
     mean_axis = fig.add_subplot(grid[0, 1])
     derivative_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
     path_axis = fig.add_subplot(grid[2, 1], sharex=mean_axis)
@@ -88,7 +89,7 @@ def create_animation(input_path, fps=5):
     projection_line, = path_axis.plot([], [], 'o--', markersize=3, label='Previous gradient projected onto step')
     residual_line, = residual_axis.plot([], [], 'o-', markersize=4, color='tab:purple')
     residual_axis.axhline(0, color='black', linewidth=1, alpha=0.5)
-    mean_axis.set_title(f'{tally_label} (point labels: parameters in {units})')
+    mean_axis.set_title(tally_label)
     derivative_axis.set_title('Partial geometry derivatives')
     path_axis.set_title('Change per distance along optimization path')
     residual_axis.set_title('100 × (path finite difference − projected)\n/ path finite difference')
@@ -122,20 +123,11 @@ def create_animation(input_path, fps=5):
         axis.xaxis.set_major_locator(MaxNLocator(integer=True))
         axis.grid(True, alpha=0.3)
         cursors.append(axis.axvline(0, color='tab:red', linestyle='--', alpha=0.6))
-    labels = []
-    for index, value in enumerate(mean):
-        label = '\n'.join(f'{name}={coordinate:.4g}' for name, coordinate in zip(names, parameters[index]))
-        above = index % 2 == 0
-        labels.append(mean_axis.annotate(
-            label, xy=(index, value), xytext=(0, 8 if above else -10),
-            textcoords='offset points', ha='center', va='bottom' if above else 'top',
-            fontsize=7, visible=False,
-        ))
     title = fig.suptitle('')
 
     def update(index):
         count = index + 1
-        image.set_data(images[index])
+        geometry_artists = geometry_plot.update(index)
         mean_line.set_data(runs[:count], mean[:count])
         for column, line in enumerate(derivative_lines):
             line.set_data(runs[:count], derivatives[:count, column])
@@ -146,13 +138,11 @@ def create_animation(input_path, fps=5):
         residual_line.set_data(runs[:count], residual[:count])
         pending.set_visible(not np.any(np.isfinite(finite_difference[:count])))
         residual_pending.set_visible(not np.any(np.isfinite(residual[:count])))
-        for label_index, label in enumerate(labels):
-            label.set_visible(label_index < count)
         for cursor in cursors:
             cursor.set_xdata([index, index])
         coordinates = ', '.join(f'{name}={value:.8g}' for name, value in zip(names, parameters[index]))
         title.set_text(f'Optimization run {index} ({count}/{len(results)}) — {score} — {coordinates} {units}')
-        return image, mean_line, *derivative_lines, *parameter_lines, difference_line, projection_line, pending, title, residual_line, residual_pending, *cursors, *labels
+        return geometry_artists[0], mean_line, *derivative_lines, *parameter_lines, difference_line, projection_line, pending, title, residual_line, residual_pending, *cursors, *geometry_artists[1:]
 
     return FuncAnimation(
         fig, update, frames=len(results), interval=1000 / fps,
@@ -166,6 +156,7 @@ def main():
     parser.add_argument('-o', '--output', help='Output animation filename (.gif or .mp4).')
     parser.add_argument('--fps', type=float, default=5, help='Frames per second (default: 5).')
     parser.add_argument('--dpi', type=int, default=100, help='Output resolution (default: 100 dpi).')
+    parser.add_argument('--mesh', action='store_true', help='Show the saved mesh tally heatmap.')
     args = parser.parse_args()
     output = Path(args.output) if args.output else Path(args.filename).with_name(
         Path(args.filename).stem + '_animation.gif'
@@ -181,7 +172,7 @@ def main():
     else:
         parser.error('Output must have a .gif or .mp4 extension.')
     try:
-        animation = create_animation(Path(args.filename), args.fps)
+        animation = create_animation(Path(args.filename), args.fps, show_mesh=args.mesh)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     try:

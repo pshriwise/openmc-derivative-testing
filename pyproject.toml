@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openmc-int-optimization"
+version = "0.1.0"
+description = "OpenMC surface-mesh optimization with Mitsuba LargeSteps and Adam"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24,<2.3", "scipy>=1.10,<=1.15", "h5py>=3",
+    "matplotlib>=3.7", "pillow>=10",
+    "mitsuba==3.9.1", "drjit==1.5.0", "cholespy==2.2.0",
+]
+
+[project.optional-dependencies]
+remesh = ["gpytoolbox==0.3.7"]
+collision = ["ipctk>=1.6,<2"]
+visualization = ["pyvista>=0.44"]
+test = ["pytest>=7"]
+
+[project.scripts]
+openmc-int-optimize = "surface_mesh.cli.run:main"
+openmc-int-deform = "surface_mesh.cli.deform:main"
+
+[tool.setuptools.packages.find]
+include = ["surface_mesh", "surface_mesh.mesh", "surface_mesh.int_optimizer", "surface_mesh.core", "surface_mesh.cli"]
+
+[tool.setuptools.package-data]
+surface_mesh = ["*.json", "*.h5m", "*.md", "*.txt", "*.sh", "configs/*.json", "configs/*.md"]
+
+[tool.pytest.ini_options]
+markers = ["integration: requires compiled PyMOAB; some checks also require PyDAGMC or IPC Toolkit"]

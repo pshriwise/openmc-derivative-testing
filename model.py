@@ -34,9 +34,10 @@ def build_model(parameter_names=None, iron=None, tally=None):
     water_sphere = openmc.Sphere(surface_id=2, x0=25, y0=0, z0=0, r=5)
     water_cell = openmc.Cell(cell_id=2, name='water_sphere', fill=water, region=-water_sphere)
 
-    # Large void sphere enclosing both cells with a vacuum boundary condition
-    outer_sphere = openmc.Sphere(surface_id=3, x0=0, y0=0, z0=0, r=1000, boundary_type='vacuum')
-    void_region = -outer_sphere & +iron_sphere & +water_sphere
+    # Large box enclosing both cells with a vacuum boundary condition
+    extent = water_sphere.r + water_sphere.x0 + 5
+    outer_box = openmc.model.RectangularParallelepiped(*(3*[-extent, extent]), boundary_type='vacuum')
+    void_region = -outer_box & +iron_sphere & +water_sphere
     void_cell = openmc.Cell(cell_id=3, name='void', fill=None, region=void_region)
 
     geometry = openmc.Geometry([iron_cell, water_cell, void_cell])
@@ -75,13 +76,23 @@ def build_model(parameter_names=None, iron=None, tally=None):
     flux_tally = openmc.Tally(tally_id=1, name='water_flux')
     flux_tally.filters = [water_filter]
     flux_tally.scores = [tally_options['score']]
-    flux_tally.estimator = 'collision'
+    # flux_tally.estimator = 'collision'
 
-    tallies = openmc.Tallies([flux_tally])
+    # mesh flux tally
+    mesh = openmc.RegularMesh(mesh_id=1)
+    mesh.dimension = [30, 20, 10]
+    mesh.lower_left = [0, -10, 0]
+    mesh.upper_right = [30, 10, 5]
+    mesh_tally = openmc.Tally(tally_id=2, name='mesh_flux')
+    mesh_tally.filters = [openmc.MeshFilter(mesh)]
+    mesh_tally.scores = [tally_options['score']]
 
-    surface_parameters = {iron_sphere : ['y0']}
+    tallies = openmc.Tallies([flux_tally, mesh_tally])
+
+    surface_parameters = {iron_sphere : ['r']}
 
     geom_derivative = openmc.GeometricDerivative(flux_tally, surface_parameters, id=1)
+
 
     # ---------------------------------------------------------------------------
     # Export

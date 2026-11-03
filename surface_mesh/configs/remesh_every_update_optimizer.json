@@ -1,0 +1,29 @@
+{
+  "int_inspired": {
+    "backend": "auto",
+    "bounds": [
+      null,
+      null,
+      null
+    ],
+    "check_self_intersections": false,
+    "enable_safeguards": false,
+    "iterations": 300,
+    "large_steps_lambda": 5.0,
+    "learning_rate": 0.01,
+    "max_displacement": 1.0,
+    "min_area_ratio": 0.05,
+    "min_edge_ratio": 1e-06,
+    "min_normal_cosine": 0.0,
+    "objective": "minimize",
+    "persist_adam_state": false,
+    "range_weight": 2.0,
+    "remesh_adam_state": "transfer",
+    "remesh_halve_edge_rounds": [],
+    "remesh_interval": 1,
+    "remesh_iterations": 5,
+    "remesh_learning_rate_per_edge": null,
+    "remesh_target_edge_length": null,
+    "volume_weight": 0.05
+  }
+}

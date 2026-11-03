@@ -1,0 +1,68 @@
+{
+  "int_run": {
+    "adaptive_sampling": {
+      "cooldown": 5,
+      "enabled": false,
+      "gradient_relative_threshold": 0.7,
+      "growth_factor": 2.0,
+      "max_particles": 400000,
+      "objective_noise_multiplier": 2.0,
+      "objective_relative_range": 0.01,
+      "patience": 2,
+      "start_iteration": 20,
+      "window": 3
+    },
+    "animation_duration_ms": 800,
+    "batches": 50,
+    "box_container_lower": [
+      -11.0,
+      -13.0,
+      -13.0
+    ],
+    "box_container_upper": [
+      10.0,
+      13.0,
+      13.0
+    ],
+    "box_solid_fov": 65.0,
+    "container_margin": 0.01,
+    "container_radius": 13.0,
+    "flux_rel_err": 0.01,
+    "geometry_detail_width": 20.0,
+    "geometry_plot_pixels": 600,
+    "max_iterations": 500,
+    "model_variant": "box",
+    "paired_sampling": false,
+    "particles": 50000,
+    "save_geometry_images": true,
+    "save_solid_geometry_images": true,
+    "save_vtk": true,
+    "seed": 5800001,
+    "solid_camera_position": [
+      24.296,
+      -36.317,
+      -10.742
+    ],
+    "solid_diffuse_fraction": 0.7,
+    "solid_fov": 45.0,
+    "solid_look_at": [
+      17.723,
+      4.26,
+      -2.502
+    ],
+    "solid_pixels": [
+      1200,
+      800
+    ],
+    "solid_up": [
+      0.04,
+      -0.244,
+      0.969
+    ],
+    "source_clearance": 0.5,
+    "threads": 2,
+    "trigger_interval": 10,
+    "trigger_max_factor": 1,
+    "validate_geometry": false
+  }
+}

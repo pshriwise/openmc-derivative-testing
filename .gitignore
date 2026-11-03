@@ -35,3 +35,12 @@ venv/
 /*.mp4
 /*_geom/
 
+
+# Surface-mesh transport runs and generated exports
+/surface_mesh/results/
+/surface_mesh/model*.xml
+
+# Python package build products
+/build/
+/dist/
+/*.egg-info/

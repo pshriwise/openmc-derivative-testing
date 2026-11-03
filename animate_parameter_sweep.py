@@ -8,6 +8,7 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter, writ
 import numpy as np
 
 from plot_parameter_sweep import load_sweep, finite_difference_derivative, history_metadata
+from geometry_plots import HistoryGeometryPlot
 
 
 def history_images(results):
@@ -34,8 +35,8 @@ def relative_difference_percent(finite_difference, tallied):
                            out=np.full_like(finite_difference, np.nan), where=valid)
 
 
-def create_animation(input_path, fps=5):
-    """Build frames in saved run order, using only observed points in each frame."""
+def create_animation(input_path, fps=5, show_mesh=False):
+    """Build frames in saved run order, optionally including the mesh tally."""
     if fps <= 0:
         raise ValueError('fps must be positive.')
     results = load_sweep(input_path)
@@ -53,6 +54,8 @@ def create_animation(input_path, fps=5):
     if len(np.unique(parameter)) != len(parameter):
         raise ValueError('Sweep parameter values must be unique.')
     images = history_images(results)
+    if show_mesh and 'mesh_mean' not in results.dtype.names:
+        raise ValueError('History has no mesh tally data; regenerate it with optimize.py.')
 
     # Each prefix is differentiated independently: later runs cannot affect
     # the finite-difference values displayed in an earlier frame.
@@ -64,9 +67,7 @@ def create_animation(input_path, fps=5):
                  for values in differences]
     fig = plt.figure(figsize=(12, 9), layout='constrained')
     grid = fig.add_gridspec(4, 2, width_ratios=(1.4, 1))
-    geometry_axis = fig.add_subplot(grid[:, 0])
-    image = geometry_axis.imshow(images[0])
-    geometry_axis.set_axis_off()
+    geometry_plot = HistoryGeometryPlot(fig, grid[:, 0], results, images, show_mesh)
     mean_axis = fig.add_subplot(grid[0, 1])
     estimate_axis = fig.add_subplot(grid[1, 1], sharex=mean_axis)
     difference_axis = fig.add_subplot(grid[2, 1], sharex=mean_axis)
@@ -113,7 +114,7 @@ def create_animation(input_path, fps=5):
 
     def update(index):
         count = index + 1
-        image.set_data(images[index])
+        geometry_artists = geometry_plot.update(index)
         mean_line.set_data(parameter[:count], mean[:count])
         estimate_line.set_data(parameter[:count], estimate[:count])
         difference_line.set_data(parameter[:count] if count >= 2 else [], differences[index])
@@ -123,7 +124,7 @@ def create_animation(input_path, fps=5):
         for cursor in cursors:
             cursor.set_xdata([parameter[index], parameter[index]])
         title.set_text(f'{case_prefix}Run {index} ({count}/{len(results)}) — {score} — {parameter_name} = {parameter[index]:.8g} {units}')
-        return image, mean_line, estimate_line, difference_line, pending, title, residual_line, residual_pending, *cursors
+        return geometry_artists[0], mean_line, estimate_line, difference_line, pending, title, residual_line, residual_pending, *cursors, *geometry_artists[1:]
 
     animation = FuncAnimation(
         fig, update, frames=len(results), interval=1000 / fps,
@@ -138,6 +139,7 @@ def main():
     parser.add_argument('-o', '--output', help='Output animation filename (.gif or .mp4).')
     parser.add_argument('--fps', type=float, default=5, help='Frames per second (default: 5).')
     parser.add_argument('--dpi', type=int, default=100, help='Output resolution (default: 100 dpi).')
+    parser.add_argument('--mesh', action='store_true', help='Show the saved mesh tally heatmap.')
     args = parser.parse_args()
     output = Path(args.output) if args.output else Path(args.filename).with_name(
         Path(args.filename).stem + '_animation.gif'
@@ -153,7 +155,7 @@ def main():
     else:
         parser.error('Output must have a .gif or .mp4 extension.')
     try:
-        animation = create_animation(Path(args.filename), fps=args.fps)
+        animation = create_animation(Path(args.filename), fps=args.fps, show_mesh=args.mesh)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     try:

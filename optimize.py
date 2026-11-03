@@ -1,10 +1,8 @@
 import argparse
 import json
-import os
 from collections import namedtuple
 from functools import partial
 from pathlib import Path
-import tempfile
 
 import numpy as np
 import openmc
@@ -12,6 +10,8 @@ import openmc.lib
 from scipy.optimize import minimize, basinhopping
 
 import geometry_plots
+from mesh_plots import capture_mesh_tally, mesh_history_fields
+from surface_mesh.core.runtime import atomic_write, configure_trigger
 from sweep_cases import validate_cases, validate_sweep_options
 from model import main as generate_model
 from config import (
@@ -44,8 +44,9 @@ runtime_args = ['-s', '10']
 
 SimulationSample = namedtuple(
     'SimulationSample',
-    ['parameter', 'tally_mean', 'tally_std_dev', 'geometry_derivative', 'dJ', 'datt', 'image'],
-    defaults=[None],
+    ['parameter', 'tally_mean', 'tally_std_dev', 'geometry_derivative', 'dJ', 'datt', 'image', 'mesh',
+     'image_extent', 'plot_extent'],
+    defaults=[None, None, None, None],
 )
 
 SIMULATION_SAMPLE_DTYPE = np.dtype([
@@ -58,7 +59,7 @@ SIMULATION_SAMPLE_DTYPE = np.dtype([
 ])
 
 def samples_to_array(samples, parameter_names=None, metadata=None):
-    """Build a structured history with optional uint8 RGBA image arrays."""
+    """Build a structured history with optional RGBA images and mesh tallies."""
     dtype = SIMULATION_SAMPLE_DTYPE
     rows = [tuple(sample[:len(SIMULATION_SAMPLE_DTYPE.names)]) for sample in samples]
     if parameter_names is not None:
@@ -86,6 +87,19 @@ def samples_to_array(samples, parameter_names=None, metadata=None):
             raise ValueError('History images must have matching shapes and uint8 pixels.')
         dtype = np.dtype(dtype.descr + [('image', 'u1', shape)])
         rows = [row + (image,) for row, image in zip(rows, images)]
+    mesh_fields, mesh_rows = mesh_history_fields([sample.mesh for sample in samples])
+    dtype = np.dtype(dtype.descr + mesh_fields)
+    rows = [row + mesh_row for row, mesh_row in zip(rows, mesh_rows)]
+    for name in ('image_extent', 'plot_extent'):
+        extents = [getattr(sample, name) for sample in samples]
+        if any(extent is not None for extent in extents):
+            if any(extent is None or np.shape(extent) != (4,)
+                   or not np.all(np.isfinite(extent))
+                   or extent[1] <= extent[0] or extent[3] <= extent[2]
+                   for extent in extents):
+                raise ValueError(f'Every sample must have a valid {name}.')
+            dtype = np.dtype(dtype.descr + [(name, 'f8', (4,))])
+            rows = [row + (extent,) for row, extent in zip(rows, extents)]
     if metadata is not None:
         serialized = json.dumps(metadata, sort_keys=True, allow_nan=False)
         dtype = np.dtype(dtype.descr + [('case_metadata', f'U{len(serialized)}')])
@@ -100,16 +114,7 @@ def save_history(samples, output_path, parameter_names=None, metadata=None):
         output_path = Path(str(output_path) + '.npy')
     output_path.parent.mkdir(parents=True, exist_ok=True)
     results = samples_to_array(samples, parameter_names, metadata)
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=output_path.parent, suffix='.npy',
-                                         delete=False) as stream:
-            temporary_path = Path(stream.name)
-            np.save(stream, results)
-        os.replace(temporary_path, output_path)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    atomic_write(output_path, lambda stream: np.save(stream, results))
 
 
 class ParameterConvergence:
@@ -135,16 +140,8 @@ class ParameterConvergence:
 
 def configure_tally_trigger():
     """Apply a relative-error trigger to the flux tally."""
-    flux_tally = next(tally for tally in model.tallies if tally.id == 1)
-    trigger = openmc.Trigger('rel_err', FLUX_TRIGGER_REL_ERR)
-    trigger.scores = flux_tally.scores
-    flux_tally.triggers = [trigger]
-
-    model.settings.trigger_active = True
-    model.settings.trigger_max_batches = (
-        model.settings.batches * TRIGGER_MAX_BATCHES_FACTOR
-    )
-    model.settings.trigger_batch_interval = TRIGGER_BATCH_INTERVAL
+    configure_trigger(model, 1, FLUX_TRIGGER_REL_ERR,
+                      TRIGGER_MAX_BATCHES_FACTOR, TRIGGER_BATCH_INTERVAL)
 
 def parameter_plot_extent(max_parameter):
     return geometry_plots.parameter_plot_extent(
@@ -182,9 +179,10 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
         plot_extent = (parameter_plot_extent(get_constraints()[1]) if parameter_names is None
                        else optimization_plot_extent(names, [get_constraints(name) for name in names]))
     with openmc.lib.run_in_memory(args=runtime_args, output=False):
-        image = geometry_plots.render_current_parameter(
+        image, image_extent, image_plot_extent = geometry_plots.render_current_parameter(
             model, run_index, plot_extent,
             parameter_names=names if parameter_names is not None else None,
+            return_extent=True,
         )
         openmc.lib.simulation_init()
         tally = openmc.lib.tallies[1]
@@ -209,6 +207,9 @@ def evaluate_current_parameter(run_index=0, plot_extent=None,
                 dJ=components(geom_derivative.dJ / normalization),
                 datt=components(geom_derivative.datt / normalization),
                 image=image,
+                mesh=capture_mesh_tally(model),
+                image_extent=image_extent,
+                plot_extent=image_plot_extent,
             )
             if sample.tally_mean == 0.0:
                 flux_rel_err = np.inf

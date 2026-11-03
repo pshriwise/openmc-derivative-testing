@@ -1,0 +1,7 @@
+__pycache__/
+results/
+model.xml
+statepoint.*.h5
+summary.h5
+tallies.out
+*.pkl
