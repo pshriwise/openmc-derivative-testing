@@ -1,0 +1,19 @@
+{
+  "int_inspired": {
+    "large_steps_lambda": 35.0,
+    "learning_rate": 0.005,
+    "iterations": 20,
+    "volume_weight": 5.0,
+    "range_weight": 2.0,
+    "bounds": [
+      [-9.0, 9.0],
+      null,
+      null
+    ],
+    "objective": "minimize",
+    "max_displacement": 0.1,
+    "check_self_intersections": true,
+    "backend": "auto",
+    "enable_safeguards": false
+  }
+}

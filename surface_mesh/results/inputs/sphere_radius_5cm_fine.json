@@ -1,0 +1,30 @@
+{
+  "input_mesh": "/home/pshriwise/repos/openmc-derivative-testing/surface_mesh/sphere.h5m",
+  "input_sha256": "f7f39d5685eabaf236e910463e85f1865b1aa956db2ad23c49e23186bbafc8ba",
+  "output_mesh": "/home/pshriwise/repos/openmc-derivative-testing/surface_mesh/results/inputs/sphere_radius_5cm_fine.h5m",
+  "original_radius": 5.0,
+  "target_radius": 2.0,
+  "scale": 0.4,
+  "local_center": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "vertices": 516,
+  "triangles": 1028,
+  "unused_vertices": 0,
+  "coincident_vertex_count": 0,
+  "min_area": 0.025982977169682706,
+  "volume": 33.13954996703017,
+  "topology": "closed_connected_oriented",
+  "global_intersections": "checked_with_ipc",
+  "centroid": [
+    -0.0003612238152768078,
+    3.732518411036324e-05,
+    3.3140421165486036e-05
+  ],
+  "continuous_collisions": "checked_with_ipc",
+  "min_area_ratio": 0.1599999999999999,
+  "min_normal_cosine": 0.9999999999999996,
+  "output_sha256": "4cd0a50b0aa1ab9b2dbaec90b18b4e46906ebdc6ff1ec4135302c3439d72ec14"
+}

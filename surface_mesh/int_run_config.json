@@ -1,0 +1,22 @@
+{
+  "int_run": {
+    "max_iterations": 1,
+    "model_variant": "sphere",
+    "particles": 10000,
+    "batches": 50,
+    "seed": 5800001,
+    "threads": 2,
+    "save_geometry_images": true,
+    "save_solid_geometry_images": true,
+    "save_vtk": true,
+    "geometry_plot_pixels": 600,
+    "geometry_detail_width": 20.0,
+    "animation_duration_ms": 800,
+    "solid_camera_position": [24.296, -36.317, -10.742],
+    "solid_look_at": [17.723, 4.260, -2.502],
+    "solid_up": [0.040, -0.244, 0.969],
+    "solid_pixels": [1200, 800],
+    "solid_fov": 45.0,
+    "box_solid_fov": 65.0
+  }
+}
